@@ -1,0 +1,9 @@
+Classcard Auto v1.4.8
+
+main.py는 업로드된 원본 스펠 프로그램으로 유지했습니다. 스펠 모드의 100%/200%/300% 선택 기능도 원본에 포함되어 있습니다.
+memorize.py와 recall.py는 각각 100%/200%/300% 선택을 지원합니다. 100% 완료 후 제공된 XPath의 버튼을 자동 클릭해 200%로 이동하고, 200% 완료 후 같은 XPath의 버튼을 다시 눌러 300%로 이동하도록 구성했습니다.
+
+다음 단계 버튼 XPath: //*[@id="study_end"]/div[2]/div[3]/div[3]/div[1]/a
+필요 모듈 설치: pip install -r requirements.txt
+스펠 모드 실행에는 handler/spelling_learning.py가 필요합니다.
+주의: 실제 클래스카드 사이트에서 완주 테스트는 아직 하지 않았습니다. 자동 클릭이 실패하면 memorize_next_percent_error.png 또는 recall_next_percent_error.png가 생성됩니다.
