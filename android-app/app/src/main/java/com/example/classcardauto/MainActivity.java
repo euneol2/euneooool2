@@ -1,3 +1,4 @@
+
 package com.example.classcardauto;
 
 import android.app.Activity;
@@ -19,12 +20,21 @@ public class MainActivity extends Activity {
         webView = new WebView(this);
 
         WebSettings settings = webView.getSettings();
+
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
+
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
+
         settings.setBuiltInZoomControls(true);
         settings.setDisplayZoomControls(false);
+
+        settings.setUserAgentString(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/120.0.0.0 Safari/537.36"
+        );
 
         CookieManager.getInstance().setAcceptCookie(true);
 
