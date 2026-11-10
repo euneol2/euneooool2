@@ -38,7 +38,7 @@ public class MainActivity extends Activity {
             return;
         }
 
-        webView.loadUrl("https://www.classcard.net/");
+        webView.loadUrl("https://www.classcard.net/login");
     }
 
     @Override
