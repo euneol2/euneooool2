@@ -30,7 +30,6 @@ public class MainActivity extends Activity {
 
     private String lastMode = "";
     private boolean automationStarted = false;
-    private boolean wordDataLoaded = false;
 
     private TextView statusText;
 
@@ -258,11 +257,7 @@ public class MainActivity extends Activity {
                 "return 'started';" +
                 "})()";
 
-        webView.evaluateJavascript(script, result -> {
-            if (result != null && result.equals("\"ready\"")) {
-                wordDataLoaded = true;
-            }
-        });
+        webView.evaluateJavascript(script, null);
     }
 
     private void detectStudyScreen() {
@@ -273,13 +268,20 @@ public class MainActivity extends Activity {
                 "let card=document.querySelector('.CardItem.current.showing');" +
                 "if(!card)return 'none';" +
 
-                "let visible=el=>!!el && el.getClientRects().length>0 && getComputedStyle(el).display!=='none' && getComputedStyle(el).visibility!=='hidden';" +
+                "let visible=el=>{" +
+                "if(!el)return false;" +
+                "let r=el.getBoundingClientRect();" +
+                "let s=getComputedStyle(el);" +
+                "return r.width>0 && r.height>0 && " +
+                "s.display!=='none' && s.visibility!=='hidden' && s.opacity!=='0';" +
+                "};" +
 
-                "let input=card.querySelector('input[name=\"input_answer\"]');" +
+                "let inputs=[...card.querySelectorAll('input[name=\"input_answer\"]')];" +
+                "let input=inputs.find(visible);" +
 
                 "let prompt=card.querySelector('.spell-content.font-32,.spell-content,.card-quest-front');" +
 
-                "if(visible(input) && !input.disabled && visible(prompt))return 'spell';" +
+                "if(input && !input.disabled && visible(prompt))return 'spell';" +
 
                 "if(card.querySelector('.cc-table.middle.fill-parent-w,.cc-table.middle.fill-parent'))return 'recall';" +
 
@@ -543,7 +545,13 @@ public class MainActivity extends Activity {
 
                 "const norm=s=>(s||'').replace(/\\s+/g,' ').trim().toLocaleLowerCase();" +
 
-                "const visible=el=>!!el && el.getClientRects().length>0 && getComputedStyle(el).display!=='none' && getComputedStyle(el).visibility!=='hidden';" +
+                "const visible=el=>{" +
+                "if(!el)return false;" +
+                "let r=el.getBoundingClientRect();" +
+                "let s=getComputedStyle(el);" +
+                "return r.width>0 && r.height>0 && " +
+                "s.display!=='none' && s.visibility!=='hidden' && s.opacity!=='0';" +
+                "};" +
 
                 "const stop=()=>{" +
                 "window.__mobileSpellRunning=false;" +
@@ -561,12 +569,15 @@ public class MainActivity extends Activity {
 
                 "if(!card)return null;" +
 
-                "let input=card.querySelector('input[name=\"input_answer\"]');" +
+                "let inputs=[...card.querySelectorAll('input[name=\"input_answer\"]')];" +
 
-                "if(!visible(input))return null;" +
-                "if(input.disabled || input.readOnly || input.type==='hidden')return null;" +
+                "let input=inputs.find(el=>{" +
+                "if(!visible(el))return false;" +
+                "if(el.disabled || el.readOnly || el.type==='hidden')return false;" +
+                "return true;" +
+                "});" +
 
-                "return input;" +
+                "return input||null;" +
                 "};" +
 
                 "const getPrompt=card=>{" +
@@ -659,7 +670,7 @@ public class MainActivity extends Activity {
                 "let input=getInput(card);" +
 
                 "if(!input){" +
-                "console.log('현재 카드의 입력창을 찾지 못했습니다.');" +
+                "console.log('현재 카드의 보이는 입력창을 찾지 못했습니다.');" +
                 "await sleep(500);" +
                 "continue;" +
                 "}" +
@@ -691,23 +702,36 @@ public class MainActivity extends Activity {
                 "input=getInput(card);" +
 
                 "if(!input){" +
-                "console.log('정답 입력 직전에 입력창이 사라졌습니다.');" +
+                "console.log('정답 입력 직전에 보이는 입력창이 사라졌습니다.');" +
+                "await sleep(300);" +
                 "continue;" +
                 "}" +
 
+                "input.scrollIntoView({block:'center'});" +
+                "input.click();" +
                 "input.focus();" +
+
+                "if(document.activeElement!==input){" +
+                "console.log('입력창 포커스 실패. 제출하지 않습니다.');" +
+                "await sleep(500);" +
+                "continue;" +
+                "}" +
 
                 "let setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;" +
                 "setter.call(input,String(answer));" +
 
-                "input.dispatchEvent(new Event('input',{bubbles:true}));" +
+                "input.dispatchEvent(new InputEvent('input',{" +
+                "bubbles:true,inputType:'insertText',data:String(answer)" +
+                "}));" +
+
                 "input.dispatchEvent(new Event('change',{bubbles:true}));" +
 
                 "await sleep(300);" +
 
-                "if(input.value!==String(answer)){" +
-                "console.log('정답 입력 확인에 실패했습니다.');" +
-                "break;" +
+                "if(!visible(input) || document.activeElement!==input || input.value!==String(answer)){" +
+                "console.log('정답 입력 검증 실패. 확인 버튼을 누르지 않습니다.');" +
+                "await sleep(500);" +
+                "continue;" +
                 "}" +
 
                 "let submit=getSubmit();" +
@@ -715,6 +739,15 @@ public class MainActivity extends Activity {
                 "if(!submit){" +
                 "console.log('확인 버튼을 찾지 못했습니다.');" +
                 "break;" +
+                "}" +
+
+                "await sleep(200);" +
+
+                "if(!window.__mobileSpellRunning)break;" +
+
+                "if(getCard()!==card || !visible(input) || input.value!==String(answer)){" +
+                "console.log('제출 직전 입력 상태가 변경되어 제출을 취소했습니다.');" +
+                "continue;" +
                 "}" +
 
                 "submit.click();" +
