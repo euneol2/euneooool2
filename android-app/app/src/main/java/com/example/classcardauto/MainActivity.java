@@ -1,3 +1,4 @@
+
 package com.example.classcardauto;
 
 import android.app.Activity;
@@ -152,10 +153,21 @@ public class MainActivity extends Activity {
         setContentView(root);
 
         WebSettings settings = webView.getSettings();
+
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
-        settings.setLoadWithOverviewMode(true);
+
+        // PC 데스크톱 화면 설정
         settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(true);
+        settings.setUserAgentString(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/120.0.0.0 Safari/537.36"
+        );
+
+        // 확대 및 축소 설정
+        settings.setSupportZoom(true);
         settings.setBuiltInZoomControls(true);
         settings.setDisplayZoomControls(false);
 
