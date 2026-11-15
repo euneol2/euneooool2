@@ -5,6 +5,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.graphics.Color;
 import android.view.Gravity;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputConnection;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
@@ -191,30 +193,44 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 if (webView == null || answer == null) return;
 
-                String script =
+                String prepareScript =
                         "(()=>{" +
-                        "const answer=" + JSONObject.quote(answer) + ";" +
                         "const card=document.querySelector('.CardItem.current.showing');" +
                         "if(!card)return false;" +
                         "const visible=el=>el&&el.getClientRects().length>0&&getComputedStyle(el).display!=='none'&&getComputedStyle(el).visibility!=='hidden';" +
-                        "const input=[...card.querySelectorAll('.spell-input:not(.hidden) input[name=\"input_answer\"],input[name=\"input_answer\"]')].find(visible);" +
+                        "const input=[...card.querySelectorAll('input[name=\"input_answer\"]')].find(visible);" +
                         "if(!input)return false;" +
                         "input.focus();" +
                         "input.click();" +
                         "input.select();" +
-                        "let inserted=false;" +
-                        "try{inserted=document.execCommand('insertText',false,answer);}catch(e){}" +
-                        "if(!inserted||input.value!==answer){" +
-                        "const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;" +
-                        "setter.call(input,answer);" +
-                        "input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:answer}));" +
-                        "}" +
-                        "return input.value===answer;" +
+                        "return true;" +
                         "})()";
 
-                webView.evaluateJavascript(script, result -> {
-                    if ("false".equals(result)) {
-                        setStatus("입력창을 찾지 못했습니다.");
+                webView.evaluateJavascript(prepareScript, result -> {
+                    if (webView == null) return;
+
+                    if (!"true".equals(result)) {
+                        setStatus("스펠 입력창을 찾지 못했습니다.");
+                        return;
+                    }
+
+                    try {
+                        EditorInfo editorInfo = new EditorInfo();
+                        InputConnection connection = webView.onCreateInputConnection(editorInfo);
+
+                        if (connection == null) {
+                            setStatus("키보드 입력 연결을 가져오지 못했습니다.");
+                            return;
+                        }
+
+                        boolean committed = connection.commitText(answer, 1);
+
+                        if (!committed) {
+                            setStatus("Android 키보드 입력에 실패했습니다.");
+                        }
+
+                    } catch (Exception e) {
+                        setStatus("스펠 입력 오류: " + e.getMessage());
                     }
                 });
             });
