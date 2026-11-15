@@ -6,19 +6,19 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.graphics.Color;
 import android.view.Gravity;
-import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
 
 public class MainActivity extends Activity {
+
     private WebView webView;
     private Handler handler = new Handler();
 
@@ -27,13 +27,11 @@ public class MainActivity extends Activity {
     private boolean spellEnabled = true;
 
     private int repeatPercent = 300;
+
     private String lastMode = "";
     private boolean automationStarted = false;
 
     private TextView statusText;
-    private CheckBox memorizeCheck;
-    private CheckBox recallCheck;
-    private CheckBox spellCheck;
 
     private final Runnable detector = new Runnable() {
         @Override
@@ -53,47 +51,63 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.WHITE);
 
-        LinearLayout settingsPanel = new LinearLayout(this);
-        settingsPanel.setOrientation(LinearLayout.VERTICAL);
-        settingsPanel.setPadding(16, 10, 16, 10);
-        settingsPanel.setBackgroundColor(Color.rgb(240, 243, 248));
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(16, 10, 16, 10);
+        panel.setBackgroundColor(Color.rgb(240, 243, 248));
 
         TextView title = new TextView(this);
         title.setText("클카모바일 자동 학습");
         title.setTextSize(20);
         title.setTextColor(Color.BLACK);
         title.setGravity(Gravity.CENTER);
-        settingsPanel.addView(title);
+        panel.addView(title);
 
         LinearLayout options = new LinearLayout(this);
-        options.setOrientation(LinearLayout.HORIZONTAL);
         options.setGravity(Gravity.CENTER);
 
-        memorizeCheck = new CheckBox(this);
-        memorizeCheck.setText("암기");
-        memorizeCheck.setChecked(true);
+        CheckBox memorize = new CheckBox(this);
+        memorize.setText("암기");
+        memorize.setChecked(true);
 
-        recallCheck = new CheckBox(this);
-        recallCheck.setText("리콜");
-        recallCheck.setChecked(true);
+        CheckBox recall = new CheckBox(this);
+        recall.setText("리콜");
+        recall.setChecked(true);
 
-        spellCheck = new CheckBox(this);
-        spellCheck.setText("스펠");
-        spellCheck.setChecked(true);
+        CheckBox spell = new CheckBox(this);
+        spell.setText("스펠");
+        spell.setChecked(true);
 
-        options.addView(memorizeCheck);
-        options.addView(recallCheck);
-        options.addView(spellCheck);
+        options.addView(memorize);
+        options.addView(recall);
+        options.addView(spell);
 
-        settingsPanel.addView(options);
+        panel.addView(options);
+
+        memorize.setOnCheckedChangeListener((button, checked) -> {
+            memorizeEnabled = checked;
+            restartDetection();
+        });
+
+        recall.setOnCheckedChangeListener((button, checked) -> {
+            recallEnabled = checked;
+            restartDetection();
+        });
+
+        spell.setOnCheckedChangeListener((button, checked) -> {
+            spellEnabled = checked;
+            restartDetection();
+        });
 
         LinearLayout repeatOptions = new LinearLayout(this);
         repeatOptions.setGravity(Gravity.CENTER);
 
         Button repeat100 = new Button(this);
         repeat100.setText("100%");
+
         Button repeat200 = new Button(this);
         repeat200.setText("200%");
+
         Button repeat300 = new Button(this);
         repeat300.setText("300%");
 
@@ -101,17 +115,22 @@ public class MainActivity extends Activity {
         repeatOptions.addView(repeat200);
         repeatOptions.addView(repeat300);
 
-        settingsPanel.addView(repeatOptions);
+        panel.addView(repeatOptions);
+
+        repeat100.setOnClickListener(v -> setRepeat(100));
+        repeat200.setOnClickListener(v -> setRepeat(200));
+        repeat300.setOnClickListener(v -> setRepeat(300));
 
         statusText = new TextView(this);
         statusText.setText("학습 화면을 기다리는 중...");
         statusText.setTextColor(Color.DKGRAY);
         statusText.setGravity(Gravity.CENTER);
-        settingsPanel.addView(statusText);
 
-        root.addView(settingsPanel);
+        panel.addView(statusText);
+        root.addView(panel);
 
         webView = new WebView(this);
+
         root.addView(webView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -119,19 +138,6 @@ public class MainActivity extends Activity {
         ));
 
         setContentView(root);
-
-        memorizeCheck.setOnCheckedChangeListener((button, checked) ->
-                memorizeEnabled = checked);
-
-        recallCheck.setOnCheckedChangeListener((button, checked) ->
-                recallEnabled = checked);
-
-        spellCheck.setOnCheckedChangeListener((button, checked) ->
-                spellEnabled = checked);
-
-        repeat100.setOnClickListener(v -> setRepeat(100));
-        repeat200.setOnClickListener(v -> setRepeat(200));
-        repeat300.setOnClickListener(v -> setRepeat(300));
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -163,30 +169,67 @@ public class MainActivity extends Activity {
 
     private void setRepeat(int percent) {
         repeatPercent = percent;
+
         Toast.makeText(
                 this,
-                "반복 횟수: " + percent + "%",
+                "반복 설정: " + percent + "%",
                 Toast.LENGTH_SHORT
         ).show();
     }
 
+    private void restartDetection() {
+        automationStarted = false;
+        lastMode = "";
+        stopCurrentAutomation();
+    }
+
+    private void stopCurrentAutomation() {
+        if (webView == null) return;
+
+        webView.evaluateJavascript(
+                "(function() {" +
+                "window.__mobileMemorizeRunning = false;" +
+                "window.__mobileRecallRunning = false;" +
+                "})();",
+                null
+        );
+    }
+
     private void detectStudyScreen() {
+
         String script =
                 "(function() {" +
                 "var card = document.querySelector('.CardItem.current.showing, .CardItem.showing.current');" +
                 "if (!card) return 'none';" +
-                "if (card.querySelector('.spell-input, input[name=\"input_answer\"]')) return 'spell';" +
-                "if (card.querySelector('.btn_kown_o')) return 'memorize';" +
-                "if (card.querySelector('.cc-table.middle.fill-parent, .cc-table.middle.fill-parent-w')) return 'recall';" +
+
+                "var visible = function(el) {" +
+                "return !!el && el.getClientRects().length > 0 && getComputedStyle(el).display !== 'none';" +
+                "};" +
+
+                "var input = card.querySelector('.spell-input:not(.hidden) input[name=\"input_answer\"], input[name=\"input_answer\"]');" +
+                "var prompt = card.querySelector('.spell-content.font-32, .spell-content, .card-quest-front');" +
+
+                "if ((input && visible(input)) || (prompt && visible(prompt) && card.querySelector('input[type=\"text\"]'))) return 'spell';" +
+
+                "if (card.querySelector('.cc-table.middle.fill-parent-w, .cc-table.middle.fill-parent')) return 'recall';" +
+
+                "if (card.querySelector('.btn_kown_o, .card-cover')) return 'memorize';" +
+
                 "return 'unknown';" +
                 "})()";
 
         webView.evaluateJavascript(script, result -> {
+
             if (result == null) return;
 
             String mode = result.replace("\"", "");
 
             if (mode.equals("none") || mode.equals("unknown")) {
+
+                if (automationStarted) {
+                    stopCurrentAutomation();
+                }
+
                 automationStarted = false;
                 lastMode = "";
                 return;
@@ -196,106 +239,157 @@ public class MainActivity extends Activity {
                 return;
             }
 
+            if (automationStarted) {
+                stopCurrentAutomation();
+            }
+
             automationStarted = true;
             lastMode = mode;
 
-            if (mode.equals("memorize") && memorizeEnabled) {
-                startMemorize();
-            } else if (mode.equals("recall") && recallEnabled) {
-                startRecall();
-            } else if (mode.equals("spell") && spellEnabled) {
-                statusText.setText(
-                        "스펠 화면 감지: 단어 데이터 확인이 필요합니다."
-                );
+            if (mode.equals("memorize")) {
+
+                if (memorizeEnabled) {
+                    startMemorize();
+                } else {
+                    statusText.setText("암기 학습 감지 · 비활성화 상태");
+                }
+
+            } else if (mode.equals("recall")) {
+
+                if (recallEnabled) {
+                    startRecall();
+                } else {
+                    statusText.setText("리콜 학습 감지 · 비활성화 상태");
+                }
+
+            } else if (mode.equals("spell")) {
+
+                if (spellEnabled) {
+                    statusText.setText("스펠 학습 감지 · 정답 데이터 연결 필요");
+                } else {
+                    statusText.setText("스펠 학습 감지 · 비활성화 상태");
+                }
             }
         });
     }
 
     private void startMemorize() {
+
         statusText.setText("암기 학습 자동 실행 중");
 
         String script =
-                "(function() {" +
+                "(async function() {" +
                 "if (window.__mobileMemorizeRunning) return;" +
                 "window.__mobileMemorizeRunning = true;" +
-                "var count = 0;" +
-                "var maxCount = 10000;" +
-                "var timer = setInterval(function() {" +
-                "var card = document.querySelector('.CardItem.showing.current');" +
-                "if (!card) {" +
-                "clearInterval(timer);" +
-                "window.__mobileMemorizeRunning = false;" +
-                "return;" +
-                "}" +
+
+                "const sleep = ms => new Promise(r => setTimeout(r, ms));" +
+
+                "try {" +
+                "while (window.__mobileMemorizeRunning) {" +
+
                 "var end = document.querySelector('#study_end');" +
-                "if (end && getComputedStyle(end).display !== 'none') {" +
-                "clearInterval(timer);" +
-                "window.__mobileMemorizeRunning = false;" +
-                "return;" +
-                "}" +
-                "var answer = card.querySelector('.btn_kown_o');" +
+                "if (end && getComputedStyle(end).display !== 'none' && end.getClientRects().length > 0) break;" +
+
+                "var card = document.querySelector('.CardItem.showing.current');" +
+                "if (!card) break;" +
+
                 "var cover = card.querySelector('.card-cover');" +
-                "if (cover && !answer) {" +
+                "if (cover) {" +
                 "cover.click();" +
-                "return;" +
+                "await sleep(500);" +
                 "}" +
-                "if (answer && !card.dataset.mobileDone) {" +
-                "card.dataset.mobileDone = '1';" +
-                "setTimeout(function() {" +
-                "if (!window.__mobileMemorizeRunning) return;" +
+
+                "var answer = card.querySelector('.btn_kown_o');" +
+                "if (!answer) {" +
+                "await sleep(300);" +
+                "continue;" +
+                "}" +
+
+                "await sleep(1200);" +
+
+                "if (!window.__mobileMemorizeRunning) break;" +
+                "answer = card.querySelector('.btn_kown_o');" +
+                "if (!answer) continue;" +
+
                 "answer.click();" +
-                "count++;" +
-                "setTimeout(function() {" +
+                "await sleep(400);" +
+
                 "var next = document.querySelector('.btnNextCard2');" +
-                "if (next) next.click();" +
-                "}, 400);" +
-                "}, 1200);" +
+                "if (!next) break;" +
+
+                "next.click();" +
+                "await sleep(600);" +
                 "}" +
-                "if (count >= maxCount) {" +
-                "clearInterval(timer);" +
+                "} finally {" +
                 "window.__mobileMemorizeRunning = false;" +
                 "}" +
-                "}, 300);" +
                 "})();";
 
         webView.evaluateJavascript(script, null);
     }
 
     private void startRecall() {
+
         statusText.setText("리콜 학습 자동 실행 중");
 
         String script =
                 "(function() {" +
+
                 "if (window.__mobileRecallRunning) return;" +
                 "window.__mobileRecallRunning = true;" +
+
                 "var lastCard = null;" +
+
                 "var timer = setInterval(function() {" +
-                "var card = document.querySelector('.CardItem.current.showing');" +
-                "if (!card) {" +
+
+                "if (!window.__mobileRecallRunning) {" +
                 "clearInterval(timer);" +
-                "window.__mobileRecallRunning = false;" +
                 "return;" +
                 "}" +
+
                 "var end = document.querySelector('#study_end');" +
-                "if (end && getComputedStyle(end).display !== 'none') {" +
+                "if (end && getComputedStyle(end).display !== 'none' && end.getClientRects().length > 0) {" +
                 "clearInterval(timer);" +
                 "window.__mobileRecallRunning = false;" +
                 "return;" +
                 "}" +
-                "if (card === lastCard) return;" +
-                "var answer = card.querySelector('.cc-table.answer');" +
+
+                "var card = document.querySelector('.CardItem.current.showing');" +
+                "if (!card || card === lastCard) return;" +
+
+                "var choices = Array.from(card.querySelectorAll('.cc-table.middle.fill-parent-w, .cc-table.middle.fill-parent'));" +
+                "var answer = choices.find(x => x.classList.contains('answer'));" +
+
                 "if (!answer) return;" +
+
                 "lastCard = card;" +
+
                 "setTimeout(function() {" +
+
                 "if (!window.__mobileRecallRunning) return;" +
                 "if (document.querySelector('.CardItem.current.showing') !== card) return;" +
+
+                "var handler = window.jQuery?._data(answer, 'events')?.click?.[0]?.handler;" +
+
+                "if (handler) {" +
+                "var event = window.jQuery.Event('click');" +
+                "event.target = answer;" +
+                "event.currentTarget = answer;" +
+                "event.which = 1;" +
+                "handler.call(answer, event);" +
+                "} else {" +
                 "answer.click();" +
+                "}" +
+
                 "setTimeout(function() {" +
                 "var next = document.querySelector('.btn-short-change-next');" +
-                "if (next) next.click();" +
+                "if (next && window.__mobileRecallRunning) next.click();" +
                 "}, 700);" +
+
                 "}, 1200);" +
+
                 "}, 250);" +
+
                 "})();";
 
         webView.evaluateJavascript(script, null);
@@ -315,12 +409,15 @@ public class MainActivity extends Activity {
         if (webView != null) {
             webView.saveState(outState);
         }
+
         super.onSaveInstanceState(outState);
     }
 
     @Override
     protected void onDestroy() {
         handler.removeCallbacks(detector);
+
+        stopCurrentAutomation();
 
         if (webView != null) {
             webView.stopLoading();
