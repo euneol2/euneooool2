@@ -351,6 +351,8 @@ public class MainActivity extends Activity {
                 "window.__mobileRecallRunning=false;" +
                 "window.__mobileSpellRunning=false;" +
                 "clearInterval(window.__mobileRecallTimer);" +
+                "clearTimeout(window.__mobileRecallAnswerTimer);" +
+                "clearTimeout(window.__mobileRecallNextTimer);" +
                 "clearTimeout(window.__mobileSpellTimer);",
                 null
         );
@@ -487,25 +489,74 @@ public class MainActivity extends Activity {
     }
 
     private void startRecall() {
-        setStatus("리콜 자동 학습 중");
+        setStatus("리콜 학습 자동 실행 중");
+
+        int rounds = repeatPercent / 100;
 
         String script =
                 "(()=>{" +
+                "clearInterval(window.__mobileRecallTimer);" +
+                "clearTimeout(window.__mobileRecallAnswerTimer);" +
+                "clearTimeout(window.__mobileRecallNextTimer);" +
+
                 "window.__mobileRecallRunning=true;" +
-                "let last=null;" +
-                "window.__mobileRecallTimer=setInterval(()=>{" +
-                "if(!window.__mobileRecallRunning)return;" +
+                "let lastCard=null;" +
+                "let round=1;" +
+                "const rounds=" + rounds + ";" +
+
+                "const stop=()=>{" +
+                "clearInterval(window.__mobileRecallTimer);" +
+                "clearTimeout(window.__mobileRecallAnswerTimer);" +
+                "clearTimeout(window.__mobileRecallNextTimer);" +
+                "window.__mobileRecallRunning=false;" +
+                "};" +
+
+                "const run=()=>{" +
+                "if(!window.__mobileRecallRunning){stop();return;}" +
+
+                "let end=document.querySelector('#study_end');" +
+                "if(end && getComputedStyle(end).display!=='none' && end.getClientRects().length>0){" +
+                "if(round>=rounds){stop();return;}" +
+                "let nextPercent=document.querySelector('#study_end > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > a');" +
+                "if(!nextPercent){stop();return;}" +
+                "round++;lastCard=null;nextPercent.click();return;" +
+                "}" +
+
                 "let card=document.querySelector('.CardItem.current.showing');" +
-                "if(!card||card===last)return;" +
-                "let answer=card.querySelector('.cc-table.answer');" +
+                "if(!card || card===lastCard)return;" +
+
+                "let choices=[...card.querySelectorAll('.cc-table.middle.fill-parent-w,.cc-table.middle.fill-parent')];" +
+                "let answer=choices.find(item=>item.classList.contains('answer'));" +
                 "if(!answer)return;" +
-                "last=card;" +
-                "setTimeout(()=>{" +
-                "if(!window.__mobileRecallRunning||document.querySelector('.CardItem.current.showing')!==card)return;" +
-                "if(window.jQuery)window.jQuery(answer).trigger('click');else answer.click();" +
-                "setTimeout(()=>{let next=document.querySelector('.btn-short-change-next');if(next)next.click();},800);" +
-                "},1000);" +
-                "},200);" +
+
+                "let handler=window.jQuery?._data(answer,'events')?.click?.[0]?.handler;" +
+                "if(!handler)return;" +
+
+                "lastCard=card;" +
+
+                "window.__mobileRecallAnswerTimer=setTimeout(()=>{" +
+                "if(!window.__mobileRecallRunning)return;" +
+                "if(document.querySelector('.CardItem.current.showing')!==card)return;" +
+
+                "let event=window.jQuery.Event('click');" +
+                "event.target=answer;event.currentTarget=answer;event.which=1;" +
+                "Object.defineProperty(event,'originalEvent',{" +
+                "value:{type:'click',isTrusted:true,target:answer,currentTarget:answer,which:1}," +
+                "configurable:true" +
+                "});" +
+
+                "handler.call(answer,event);" +
+
+                "window.__mobileRecallNextTimer=setTimeout(()=>{" +
+                "if(!window.__mobileRecallRunning)return;" +
+                "let next=document.querySelector('.btn-short-change-next');" +
+                "if(next && window.jQuery)window.jQuery(next).trigger('click');" +
+                "},800);" +
+                "},1200);" +
+                "};" +
+
+                "run();" +
+                "window.__mobileRecallTimer=setInterval(run,200);" +
                 "})();";
 
         webView.evaluateJavascript(script, null);
@@ -542,10 +593,7 @@ public class MainActivity extends Activity {
                 "if(b)b.click();" +
                 "};" +
 
-                "const next=()=>{" +
-                "let b=[...document.querySelectorAll('.btn-short-change-next')].find(visible);" +
-                "if(b)b.click();" +
-                "};" +
+                "const key=c=>((c&&c.dataset.idx)||'')+'|'+norm(prompt(c));" +
 
                 "const submit=i=>{" +
                 "let b=[...document.querySelectorAll('.btn-confirm,button[type=\"submit\"],#wrapper-learn .btn-primary')].find(visible);" +
@@ -560,7 +608,6 @@ public class MainActivity extends Activity {
                 "return true;" +
                 "};" +
 
-                "const key=c=>((c&&c.dataset.idx)||'')+'|'+norm(prompt(c));" +
                 "let rounds=" + (repeatPercent / 100) + ";" +
 
                 "for(let round=1;round<=rounds&&window.__mobileSpellRunning;round++){" +
