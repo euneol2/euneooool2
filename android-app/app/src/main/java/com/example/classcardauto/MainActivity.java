@@ -202,20 +202,25 @@ public class MainActivity extends Activity {
 
     private void captureWordData() {
 
-        if (wordDataLoaded || webView == null) return;
+        if (webView == null) return;
 
         String script =
                 "(()=>{" +
+
+                "if(window.__classcardWordsReady && window.__classcardWords?.length)return 'ready';" +
+                "if(window.__classcardCaptureRunning)return 'waiting';" +
+
                 "let root=document.querySelector('#tab_set_all');" +
-                "if(!root)return false;" +
+                "if(!root)return 'missing';" +
 
                 "let rows=root.querySelectorAll(':scope > div:nth-child(2) > div');" +
-                "if(!rows.length)return false;" +
+                "if(!rows.length)return 'missing';" +
 
                 "let toggle=root.querySelector('.card-list-title > div > div:nth-child(1) > a');" +
-                "if(!toggle)return false;" +
+                "if(!toggle)return 'missing';" +
 
                 "let words=[];" +
+
                 "for(let i=0;i<rows.length;i++){" +
                 "let row=rows[i];" +
                 "let en=row.querySelector('div:nth-child(4) > div:nth-child(1) > div:nth-child(1) > div > div');" +
@@ -223,23 +228,38 @@ public class MainActivity extends Activity {
                 "words.push({en:en.innerText.trim(),ko:''});" +
                 "}" +
 
+                "if(!words.length)return 'missing';" +
+
+                "window.__classcardCaptureRunning=true;" +
                 "toggle.click();" +
 
                 "setTimeout(()=>{" +
+
+                "try{" +
                 "let current=root.querySelectorAll(':scope > div:nth-child(2) > div');" +
+
                 "for(let i=0;i<current.length && i<words.length;i++){" +
                 "let ko=current[i].querySelector('div:nth-child(4) > div:nth-child(2) > div:nth-child(1) > div > div');" +
                 "if(ko)words[i].ko=ko.innerText.split('\\n')[0].trim();" +
                 "}" +
-                "window.__classcardWords=words.filter(w=>w.en&&w.ko);" +
-                "toggle.click();" +
-                "},500);" +
 
-                "return true;" +
+                "window.__classcardWords=words.filter(w=>w.en&&w.ko);" +
+
+                "}catch(e){" +
+                "console.error('단어 데이터 수집 오류:',e);" +
+                "}finally{" +
+                "toggle.click();" +
+                "window.__classcardWordsReady=!!(window.__classcardWords && window.__classcardWords.length);" +
+                "window.__classcardCaptureRunning=false;" +
+                "}" +
+
+                "},700);" +
+
+                "return 'started';" +
                 "})()";
 
         webView.evaluateJavascript(script, result -> {
-            if ("true".equals(result)) {
+            if (result != null && result.equals("\"ready\"")) {
                 wordDataLoaded = true;
             }
         });
@@ -249,34 +269,24 @@ public class MainActivity extends Activity {
 
         String script =
                 "(()=>{" +
-                "let card=document.querySelector('.CardItem.current.showing, .CardItem.showing.current');" +
+
+                "let card=document.querySelector('.CardItem.current.showing');" +
                 "if(!card)return 'none';" +
 
-                "let visible=el=>!!el && el.getClientRects().length>0 && getComputedStyle(el).display!=='none';" +
+                "let visible=el=>!!el && el.getClientRects().length>0 && getComputedStyle(el).display!=='none' && getComputedStyle(el).visibility!=='hidden';" +
 
-                "let inputSelectors=[" +
-                "'.spell-input:not(.hidden) input[name=\"input_answer\"]'," +
-                "'input[name=\"input_answer\"]'," +
-                "'input.input-answer'," +
-                "'.spell-input input[type=\"text\"]'" +
-                "];" +
-
-                "let input=null;" +
-                "for(let s of inputSelectors){" +
-                "input=card.querySelector(s);" +
-                "if(visible(input) && !input.disabled)break;" +
-                "input=null;" +
-                "}" +
+                "let input=card.querySelector('input[name=\"input_answer\"]');" +
 
                 "let prompt=card.querySelector('.spell-content.font-32,.spell-content,.card-quest-front');" +
 
-                "if(input && prompt && visible(prompt))return 'spell';" +
+                "if(visible(input) && !input.disabled && visible(prompt))return 'spell';" +
 
                 "if(card.querySelector('.cc-table.middle.fill-parent-w,.cc-table.middle.fill-parent'))return 'recall';" +
 
                 "if(card.querySelector('.btn_kown_o,.card-cover'))return 'memorize';" +
 
                 "return 'unknown';" +
+
                 "})()";
 
         webView.evaluateJavascript(script, result -> {
@@ -342,6 +352,7 @@ public class MainActivity extends Activity {
 
         String script =
                 "(async function() {" +
+
                 "if(window.__mobileMemorizeRunning)return;" +
                 "window.__mobileMemorizeRunning=true;" +
 
@@ -349,6 +360,7 @@ public class MainActivity extends Activity {
                 "const rounds=" + rounds + ";" +
 
                 "try{" +
+
                 "for(let round=1;round<=rounds;round++){" +
 
                 "while(window.__mobileMemorizeRunning){" +
@@ -357,24 +369,28 @@ public class MainActivity extends Activity {
                 "if(end && getComputedStyle(end).display!=='none' && end.getClientRects().length>0)break;" +
 
                 "let card=document.querySelector('.CardItem.showing.current');" +
+
                 "if(!card){" +
                 "await sleep(300);" +
                 "continue;" +
                 "}" +
 
                 "let cover=card.querySelector('.card-cover');" +
+
                 "if(cover){" +
                 "cover.click();" +
                 "await sleep(500);" +
                 "}" +
 
                 "let answer=card.querySelector('.btn_kown_o');" +
+
                 "if(!answer){" +
                 "await sleep(300);" +
                 "continue;" +
                 "}" +
 
                 "await sleep(1000);" +
+
                 "if(!window.__mobileMemorizeRunning)break;" +
 
                 "answer=card.querySelector('.btn_kown_o');" +
@@ -385,20 +401,28 @@ public class MainActivity extends Activity {
 
                 "let next=document.querySelector('.btnNextCard2');" +
                 "if(next)next.click();" +
+
                 "await sleep(600);" +
                 "}" +
 
                 "if(!window.__mobileMemorizeRunning)break;" +
+
                 "if(round<rounds){" +
+
                 "let nextPercent=document.querySelector('#study_end > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > a');" +
+
                 "if(!nextPercent)break;" +
+
                 "nextPercent.click();" +
                 "await sleep(1500);" +
+
                 "}" +
                 "}" +
+
                 "}finally{" +
                 "window.__mobileMemorizeRunning=false;" +
                 "}" +
+
                 "})();";
 
         webView.evaluateJavascript(script, null);
@@ -430,27 +454,33 @@ public class MainActivity extends Activity {
                 "};" +
 
                 "const run=()=>{" +
+
                 "if(!window.__mobileRecallRunning){stop();return;}" +
 
                 "let end=document.querySelector('#study_end');" +
+
                 "if(end && getComputedStyle(end).display!=='none' && end.getClientRects().length>0){" +
 
                 "if(round>=rounds){stop();return;}" +
 
                 "let nextPercent=document.querySelector('#study_end > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > a');" +
+
                 "if(!nextPercent){stop();return;}" +
 
                 "round++;" +
                 "lastCard=null;" +
                 "nextPercent.click();" +
+
                 "return;" +
                 "}" +
 
                 "let card=document.querySelector('.CardItem.current.showing');" +
+
                 "if(!card || card===lastCard)return;" +
 
                 "let choices=[...card.querySelectorAll('.cc-table.middle.fill-parent-w,.cc-table.middle.fill-parent')];" +
                 "let answer=choices.find(item=>item.classList.contains('answer'));" +
+
                 "if(!answer)return;" +
 
                 "let handler=window.jQuery?._data(answer,'events')?.click?.[0]?.handler;" +
@@ -459,6 +489,7 @@ public class MainActivity extends Activity {
                 "lastCard=card;" +
 
                 "window.__mobileRecallAnswerTimer=setTimeout(()=>{" +
+
                 "if(!window.__mobileRecallRunning)return;" +
                 "if(document.querySelector('.CardItem.current.showing')!==card)return;" +
 
@@ -475,9 +506,13 @@ public class MainActivity extends Activity {
                 "handler.call(answer,event);" +
 
                 "window.__mobileRecallNextTimer=setTimeout(()=>{" +
+
                 "if(!window.__mobileRecallRunning)return;" +
+
                 "let next=document.querySelector('.btn-short-change-next');" +
+
                 "if(next && window.jQuery)window.jQuery(next).trigger('click');" +
+
                 "},800);" +
 
                 "},1200);" +
@@ -485,6 +520,7 @@ public class MainActivity extends Activity {
 
                 "run();" +
                 "window.__mobileRecallTimer=setInterval(run,200);" +
+
                 "})();";
 
         webView.evaluateJavascript(script, null);
@@ -523,85 +559,77 @@ public class MainActivity extends Activity {
 
                 "const getInput=card=>{" +
 
-                "let selectors=[" +
-                "'.spell-input:not(.hidden) input[name=\"input_answer\"]'," +
-                "'.CardItem.current.showing .spell-input:not(.hidden) input[name=\"input_answer\"]'," +
-                ".concat('input[name=\"input_answer\"]')," +
-                "'#wrapper-learn input[type=\"text\"]'," +
-                "'.CardItem.current.showing input.input-answer'," +
-                "'input.form-control.input-lg.input-answer'" +
-                "];" +
+                "if(!card)return null;" +
 
-                "for(let selector of selectors){" +
-                "let elements=document.querySelectorAll(selector);" +
-                "for(let input of elements){" +
-                "if(!visible(input))continue;" +
-                "if(input.disabled || input.readOnly)continue;" +
-                "if(input.type==='hidden')continue;" +
-                "if(input.closest('#study_end'))continue;" +
+                "let input=card.querySelector('input[name=\"input_answer\"]');" +
+
+                "if(!visible(input))return null;" +
+                "if(input.disabled || input.readOnly || input.type==='hidden')return null;" +
+
                 "return input;" +
-                "}" +
-                "}" +
-
-                "return null;" +
                 "};" +
 
                 "const getPrompt=card=>{" +
+
+                "if(!card)return '';" +
+
                 "let selectors=['.spell-content.font-32','.spell-content','.card-quest-front'];" +
+
                 "for(let selector of selectors){" +
                 "let el=card.querySelector(selector);" +
                 "if(visible(el) && el.innerText.trim())return el.innerText.trim();" +
                 "}" +
+
                 "return '';" +
                 "};" +
 
-                "const getSubmit=card=>{" +
+                "const getSubmit=()=>{" +
 
-                "let candidates=[" +
-                "card.querySelector('.btn-confirm')," +
-                "card.querySelector('button[type=\"submit\"]')," +
-                "document.querySelector('#wrapper-learn .btn-confirm')" +
-                "];" +
+                "let buttons=[...document.querySelectorAll('.btn-confirm')];" +
 
-                "for(let button of candidates){" +
+                "for(let button of buttons){" +
+
                 "if(!visible(button))continue;" +
                 "if(button.disabled)continue;" +
                 "if(button.closest('#study_end'))continue;" +
 
-                "let label=norm(button.innerText || button.value || button.getAttribute('aria-label'));" +
-                "if(label.includes('완료') || label.includes('종료'))continue;" +
-
                 "return button;" +
                 "}" +
 
                 "return null;" +
                 "};" +
 
-                "const dismissFeedback=async()=>{" +
-                "let buttons=[" +
-                "document.querySelector('.modal-content .btn-ok')," +
-                "...[...document.querySelectorAll('button,a')].find(b=>norm(b.innerText)==='알겠습니다!')" +
-                "];" +
+                "const getNext=()=>{" +
+
+                "let buttons=[...document.querySelectorAll('.btn-short-change-next')];" +
+
                 "for(let button of buttons){" +
-                "if(visible(button) && !button.closest('#study_end')){" +
-                "button.click();" +
-                "await sleep(250);" +
-                "return;" +
-                "}" +
-                "}" +
-                "};" +
 
-                "const getNext=card=>{" +
-                "let selectors=['.btn-short-change-next','#wrapper-learn .btn-next'];" +
-                "for(let selector of selectors){" +
-                "let button=document.querySelector(selector);" +
-                "if(!visible(button) || button.disabled)continue;" +
+                "if(!visible(button))continue;" +
+                "if(button.disabled)continue;" +
                 "if(button.closest('#study_end'))continue;" +
-                "let label=norm(button.innerText || button.value);" +
-                "if(label.includes('완료') || label.includes('종료'))continue;" +
+
                 "return button;" +
                 "}" +
+
                 "return null;" +
+                "};" +
+
+                "const waitForCardChange=async(card,prompt)=>{" +
+
+                "for(let i=0;i<30;i++){" +
+
+                "if(!window.__mobileSpellRunning)return 'stopped';" +
+                "if(isComplete())return 'complete';" +
+
+                "let current=getCard();" +
+
+                "if(current && (current!==card || norm(getPrompt(current))!==norm(prompt)))return 'changed';" +
+
+                "await sleep(150);" +
+                "}" +
+
+                "return 'waiting';" +
                 "};" +
 
                 "try{" +
@@ -615,12 +643,14 @@ public class MainActivity extends Activity {
                 "if(isComplete())break;" +
 
                 "let card=getCard();" +
+
                 "if(!card){" +
                 "await sleep(300);" +
                 "continue;" +
                 "}" +
 
                 "let prompt=getPrompt(card);" +
+
                 "if(!prompt){" +
                 "await sleep(300);" +
                 "continue;" +
@@ -629,11 +659,19 @@ public class MainActivity extends Activity {
                 "let input=getInput(card);" +
 
                 "if(!input){" +
-                "console.log('스펠 입력창을 찾지 못했습니다.');" +
-                "break;" +
+                "console.log('현재 카드의 입력창을 찾지 못했습니다.');" +
+                "await sleep(500);" +
+                "continue;" +
                 "}" +
 
                 "let words=window.__classcardWords||[];" +
+
+                "if(!window.__classcardWordsReady || !words.length){" +
+                "console.log('단어 데이터 준비를 기다리는 중입니다.');" +
+                "await sleep(1000);" +
+                "continue;" +
+                "}" +
+
                 "let found=words.find(w=>norm(w.ko)===norm(prompt) || norm(w.en)===norm(prompt));" +
 
                 "if(!found){" +
@@ -642,17 +680,19 @@ public class MainActivity extends Activity {
                 "}" +
 
                 "let answer=norm(found.ko)===norm(prompt)?found.en:found.ko;" +
+
                 "if(!answer)break;" +
 
-                "await sleep(1200);" +
+                "await sleep(700);" +
 
                 "if(!window.__mobileSpellRunning || isComplete())break;" +
                 "if(getCard()!==card)continue;" +
 
                 "input=getInput(card);" +
+
                 "if(!input){" +
                 "console.log('정답 입력 직전에 입력창이 사라졌습니다.');" +
-                "break;" +
+                "continue;" +
                 "}" +
 
                 "input.focus();" +
@@ -670,58 +710,77 @@ public class MainActivity extends Activity {
                 "break;" +
                 "}" +
 
-                "if(isComplete())break;" +
+                "let submit=getSubmit();" +
 
-                "let submit=getSubmit(card);" +
-
-                "if(submit){" +
-                "submit.click();" +
-                "}else{" +
-                "input.focus();" +
-                "input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));" +
-                "input.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));" +
-                "}" +
-
-                "await sleep(800);" +
-                "await dismissFeedback();" +
-
-                "if(isComplete())break;" +
-
-                "let current=getCard();" +
-
-                "if(current===card){" +
-                "let next=getNext(card);" +
-                "if(next){" +
-                "next.click();" +
-                "await sleep(700);" +
-                "}" +
-                "}" +
-
-                "if(getCard()===card && !isComplete()){" +
-                "console.log('제출 후 다음 문제로 넘어가지 않았습니다. 자동 진행을 중단합니다.');" +
+                "if(!submit){" +
+                "console.log('확인 버튼을 찾지 못했습니다.');" +
                 "break;" +
+                "}" +
+
+                "submit.click();" +
+
+                "let result=await waitForCardChange(card,prompt);" +
+
+                "if(result==='stopped')break;" +
+                "if(result==='complete')break;" +
+
+                "if(result==='waiting'){" +
+
+                "let next=getNext();" +
+
+                "if(next){" +
+
+                "next.click();" +
+
+                "result=await waitForCardChange(card,prompt);" +
+
+                "if(result==='stopped')break;" +
+                "if(result==='complete')break;" +
+
+                "if(result==='waiting'){" +
+                "console.log('오답 처리 후에도 다음 카드로 이동하지 않았습니다.');" +
+                "break;" +
+                "}" +
+
+                "}else{" +
+
+                "console.log('제출 후 카드 이동 또는 오답 버튼을 확인하지 못했습니다.');" +
+                "break;" +
+
+                "}" +
                 "}" +
 
                 "processed++;" +
 
                 "if(processed>500)break;" +
+
+                "await sleep(300);" +
                 "}" +
 
                 "if(!window.__mobileSpellRunning)break;" +
 
                 "if(round<rounds && isComplete()){" +
+
                 "let nextPercent=document.querySelector('#study_end > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > a');" +
+
                 "if(!nextPercent)break;" +
+
                 "nextPercent.click();" +
                 "await sleep(1500);" +
+
                 "}" +
                 "}" +
 
                 "}catch(error){" +
+
                 "console.error('스펠 자동화 오류:',error);" +
+
                 "}finally{" +
+
                 "stop();" +
+
                 "}" +
+
                 "})();";
 
         webView.evaluateJavascript(script, null);
