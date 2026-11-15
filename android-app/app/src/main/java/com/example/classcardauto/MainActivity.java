@@ -254,58 +254,66 @@ public class MainActivity extends Activity {
                 "if(window.__classcardCaptureRunning)return 'waiting';" +
 
                 "let root=document.querySelector('#tab_set_all');" +
-                "if(!root)return 'missing';" +
+
+                "if(!root){" +
+                "window.__classcardCaptureStatus='단어 목록 화면을 기다리는 중...';" +
+                "return 'missing';" +
+                "}" +
 
                 "let rows=root.querySelectorAll(':scope > div:nth-child(2) > div');" +
-                "if(!rows.length)return 'missing';" +
 
-                "let toggle=root.querySelector('.card-list-title > div > div:nth-child(1) > a');" +
-                "if(!toggle)return 'missing';" +
+                "if(!rows.length){" +
+                "window.__classcardCaptureStatus='단어 목록 항목을 찾지 못했습니다.';" +
+                "return 'missing';" +
+                "}" +
+
+                "window.__classcardCaptureRunning=true;" +
+                "window.__classcardCaptureStatus='단어 데이터 확인 중...';" +
+
+                "try{" +
 
                 "let words=[];" +
 
                 "for(let i=0;i<rows.length;i++){" +
+
                 "let row=rows[i];" +
+
                 "let en=row.querySelector('div:nth-child(4) > div:nth-child(1) > div:nth-child(1) > div > div');" +
-                "if(!en)continue;" +
-                "words.push({en:en.innerText.trim(),ko:''});" +
+                "let ko=row.querySelector('div:nth-child(4) > div:nth-child(2) > div:nth-child(1) > div > div');" +
+
+                "if(!en || !ko)continue;" +
+
+                "let english=(en.textContent||'').trim();" +
+                "let korean=(ko.textContent||'').split('\\n')[0].trim();" +
+
+                "if(english && korean){" +
+                "words.push({en:english,ko:korean});" +
                 "}" +
 
-                "if(!words.length)return 'missing';" +
-
-                "window.__classcardCaptureStatus='단어 데이터 수집 중...';" +
-                "window.__classcardCaptureRunning=true;" +
-                "toggle.click();" +
-
-                "setTimeout(()=>{" +
-
-                "try{" +
-                "let current=root.querySelectorAll(':scope > div:nth-child(2) > div');" +
-
-                "for(let i=0;i<current.length && i<words.length;i++){" +
-                "let ko=current[i].querySelector('div:nth-child(4) > div:nth-child(2) > div:nth-child(1) > div > div');" +
-                "if(ko)words[i].ko=ko.innerText.split('\\n')[0].trim();" +
                 "}" +
 
-                "window.__classcardWords=words.filter(w=>w.en&&w.ko);" +
+                "if(words.length>0){" +
+                "window.__classcardWords=words;" +
+                "window.__classcardWordsReady=true;" +
+                "window.__classcardCaptureStatus='단어 데이터 수집 완료: '+words.length+'개';" +
+                "}else{" +
+                "window.__classcardWords=[];" +
+                "window.__classcardWordsReady=false;" +
+                "window.__classcardCaptureStatus='단어 뜻을 HTML에서 찾지 못했습니다. 추가 확인이 필요합니다.';" +
+                "}" +
 
                 "}catch(e){" +
+
+                "window.__classcardWordsReady=false;" +
                 "window.__classcardCaptureStatus='단어 데이터 수집 오류: '+e.message;" +
-                "console.error('단어 데이터 수집 오류:',e);" +
+                "console.error(e);" +
+
                 "}finally{" +
-                "toggle.click();" +
-                "window.__classcardWordsReady=!!(window.__classcardWords && window.__classcardWords.length);" +
                 "window.__classcardCaptureRunning=false;" +
-                "if(window.__classcardWordsReady){" +
-                "window.__classcardCaptureStatus='단어 데이터 수집 완료: '+window.__classcardWords.length+'개';" +
-                "}else{" +
-                "window.__classcardCaptureStatus='단어 데이터 수집 실패: 한국어 뜻을 가져오지 못했습니다.';" +
-                "}" +
                 "}" +
 
-                "},700);" +
+                "return window.__classcardWordsReady?'ready':'failed';" +
 
-                "return 'started';" +
                 "})()";
 
         webView.evaluateJavascript(script, null);
