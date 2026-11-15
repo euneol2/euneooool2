@@ -32,6 +32,7 @@ public class MainActivity extends Activity {
     private boolean automationStarted = false;
 
     private TextView statusText;
+    private String lastDisplayedStatus = "";
 
     private final Runnable detector = new Runnable() {
         @Override
@@ -39,6 +40,7 @@ public class MainActivity extends Activity {
             if (webView != null) {
                 captureWordData();
                 detectStudyScreen();
+                pollSpellStatus();
             }
             handler.postDelayed(this, 1000);
         }
@@ -124,6 +126,7 @@ public class MainActivity extends Activity {
         statusText.setText("학습 화면을 기다리는 중...");
         statusText.setTextColor(Color.DKGRAY);
         statusText.setGravity(Gravity.CENTER);
+        statusText.setTextSize(14);
         panel.addView(statusText);
 
         root.addView(panel);
@@ -166,6 +169,45 @@ public class MainActivity extends Activity {
         handler.postDelayed(detector, 1500);
     }
 
+    private void setStatus(String message) {
+        if (statusText == null) return;
+
+        if (message == null || message.trim().isEmpty()) return;
+
+        if (message.equals(lastDisplayedStatus)) return;
+
+        lastDisplayedStatus = message;
+        statusText.setText(message);
+    }
+
+    private void pollSpellStatus() {
+        if (webView == null || !lastMode.equals("spell")) return;
+
+        webView.evaluateJavascript(
+                "(()=>window.__mobileSpellStatus || window.__classcardCaptureStatus || '')()",
+                result -> {
+                    if (result == null || result.equals("null")) return;
+
+                    String message = result;
+
+                    if (message.length() >= 2 &&
+                            message.startsWith("\"") &&
+                            message.endsWith("\"")) {
+                        message = message.substring(1, message.length() - 1);
+                    }
+
+                    message = message
+                            .replace("\\n", " ")
+                            .replace("\\\"", "\"")
+                            .trim();
+
+                    if (!message.isEmpty()) {
+                        setStatus(message);
+                    }
+                }
+        );
+    }
+
     private void setRepeat(int percent) {
         repeatPercent = percent;
 
@@ -179,7 +221,9 @@ public class MainActivity extends Activity {
     private void restartDetection() {
         automationStarted = false;
         lastMode = "";
+        lastDisplayedStatus = "";
         stopCurrentAutomation();
+        setStatus("학습 화면을 다시 확인하는 중...");
     }
 
     private void stopCurrentAutomation() {
@@ -229,6 +273,7 @@ public class MainActivity extends Activity {
 
                 "if(!words.length)return 'missing';" +
 
+                "window.__classcardCaptureStatus='단어 데이터 수집 중...';" +
                 "window.__classcardCaptureRunning=true;" +
                 "toggle.click();" +
 
@@ -245,11 +290,17 @@ public class MainActivity extends Activity {
                 "window.__classcardWords=words.filter(w=>w.en&&w.ko);" +
 
                 "}catch(e){" +
+                "window.__classcardCaptureStatus='단어 데이터 수집 오류: '+e.message;" +
                 "console.error('단어 데이터 수집 오류:',e);" +
                 "}finally{" +
                 "toggle.click();" +
                 "window.__classcardWordsReady=!!(window.__classcardWords && window.__classcardWords.length);" +
                 "window.__classcardCaptureRunning=false;" +
+                "if(window.__classcardWordsReady){" +
+                "window.__classcardCaptureStatus='단어 데이터 수집 완료: '+window.__classcardWords.length+'개';" +
+                "}else{" +
+                "window.__classcardCaptureStatus='단어 데이터 수집 실패: 한국어 뜻을 가져오지 못했습니다.';" +
+                "}" +
                 "}" +
 
                 "},700);" +
@@ -324,7 +375,7 @@ public class MainActivity extends Activity {
                 if (memorizeEnabled) {
                     startMemorize();
                 } else {
-                    statusText.setText("암기 학습 감지 · 비활성화 상태");
+                    setStatus("암기 학습 감지 · 비활성화 상태");
                 }
 
             } else if (mode.equals("recall")) {
@@ -332,7 +383,7 @@ public class MainActivity extends Activity {
                 if (recallEnabled) {
                     startRecall();
                 } else {
-                    statusText.setText("리콜 학습 감지 · 비활성화 상태");
+                    setStatus("리콜 학습 감지 · 비활성화 상태");
                 }
 
             } else if (mode.equals("spell")) {
@@ -340,7 +391,7 @@ public class MainActivity extends Activity {
                 if (spellEnabled) {
                     startSpell();
                 } else {
-                    statusText.setText("스펠 학습 감지 · 비활성화 상태");
+                    setStatus("스펠 학습 감지 · 비활성화 상태");
                 }
             }
         });
@@ -348,7 +399,7 @@ public class MainActivity extends Activity {
 
     private void startMemorize() {
 
-        statusText.setText("암기 학습 자동 실행 중");
+        setStatus("암기 학습 자동 실행 중");
 
         int rounds = repeatPercent / 100;
 
@@ -432,7 +483,7 @@ public class MainActivity extends Activity {
 
     private void startRecall() {
 
-        statusText.setText("리콜 학습 자동 실행 중");
+        setStatus("리콜 학습 자동 실행 중");
 
         int rounds = repeatPercent / 100;
 
@@ -530,7 +581,7 @@ public class MainActivity extends Activity {
 
     private void startSpell() {
 
-        statusText.setText("스펠 학습 자동 실행 중");
+        setStatus("스펠 자동화 준비 중...");
 
         int rounds = repeatPercent / 100;
 
@@ -539,6 +590,7 @@ public class MainActivity extends Activity {
 
                 "if(window.__mobileSpellRunning)return;" +
                 "window.__mobileSpellRunning=true;" +
+                "window.__mobileSpellStatus='스펠 자동화 시작';" +
 
                 "const sleep=ms=>new Promise(r=>setTimeout(r,ms));" +
                 "const rounds=" + rounds + ";" +
@@ -566,80 +618,39 @@ public class MainActivity extends Activity {
                 "const getCard=()=>document.querySelector('.CardItem.current.showing');" +
 
                 "const getInput=card=>{" +
-
                 "if(!card)return null;" +
-
                 "let inputs=[...card.querySelectorAll('input[name=\"input_answer\"]')];" +
-
-                "let input=inputs.find(el=>{" +
-                "if(!visible(el))return false;" +
-                "if(el.disabled || el.readOnly || el.type==='hidden')return false;" +
-                "return true;" +
-                "});" +
-
-                "return input||null;" +
+                "return inputs.find(el=>visible(el) && !el.disabled && !el.readOnly && el.type!=='hidden')||null;" +
                 "};" +
 
                 "const getPrompt=card=>{" +
-
                 "if(!card)return '';" +
-
                 "let selectors=['.spell-content.font-32','.spell-content','.card-quest-front'];" +
-
                 "for(let selector of selectors){" +
                 "let el=card.querySelector(selector);" +
                 "if(visible(el) && el.innerText.trim())return el.innerText.trim();" +
                 "}" +
-
                 "return '';" +
                 "};" +
 
                 "const getSubmit=()=>{" +
-
                 "let buttons=[...document.querySelectorAll('.btn-confirm')];" +
-
-                "for(let button of buttons){" +
-
-                "if(!visible(button))continue;" +
-                "if(button.disabled)continue;" +
-                "if(button.closest('#study_end'))continue;" +
-
-                "return button;" +
-                "}" +
-
-                "return null;" +
+                "return buttons.find(button=>visible(button) && !button.disabled && !button.closest('#study_end'))||null;" +
                 "};" +
 
                 "const getNext=()=>{" +
-
                 "let buttons=[...document.querySelectorAll('.btn-short-change-next')];" +
-
-                "for(let button of buttons){" +
-
-                "if(!visible(button))continue;" +
-                "if(button.disabled)continue;" +
-                "if(button.closest('#study_end'))continue;" +
-
-                "return button;" +
-                "}" +
-
-                "return null;" +
+                "return buttons.find(button=>visible(button) && !button.disabled && !button.closest('#study_end'))||null;" +
                 "};" +
 
                 "const waitForCardChange=async(card,prompt)=>{" +
-
                 "for(let i=0;i<30;i++){" +
-
                 "if(!window.__mobileSpellRunning)return 'stopped';" +
                 "if(isComplete())return 'complete';" +
-
                 "let current=getCard();" +
-
                 "if(current && (current!==card || norm(getPrompt(current))!==norm(prompt)))return 'changed';" +
-
                 "await sleep(150);" +
                 "}" +
-
                 "return 'waiting';" +
                 "};" +
 
@@ -651,50 +662,66 @@ public class MainActivity extends Activity {
 
                 "while(window.__mobileSpellRunning){" +
 
-                "if(isComplete())break;" +
+                "if(isComplete()){" +
+                "window.__mobileSpellStatus='스펠 학습 완료';" +
+                "break;" +
+                "}" +
 
                 "let card=getCard();" +
 
                 "if(!card){" +
-                "await sleep(300);" +
-                "continue;" +
-                "}" +
-
-                "let prompt=getPrompt(card);" +
-
-                "if(!prompt){" +
-                "await sleep(300);" +
-                "continue;" +
-                "}" +
-
-                "let input=getInput(card);" +
-
-                "if(!input){" +
-                "console.log('현재 카드의 보이는 입력창을 찾지 못했습니다.');" +
+                "window.__mobileSpellStatus='현재 문제 카드를 찾는 중...';" +
                 "await sleep(500);" +
                 "continue;" +
                 "}" +
 
-                "let words=window.__classcardWords||[];" +
+                "window.__mobileSpellStatus='문제 내용 확인 중...';" +
+                "let prompt=getPrompt(card);" +
 
-                "if(!window.__classcardWordsReady || !words.length){" +
-                "console.log('단어 데이터 준비를 기다리는 중입니다.');" +
+                "if(!prompt){" +
+                "window.__mobileSpellStatus='문제 내용 읽기 실패: 문제 선택자를 확인해야 합니다.';" +
+                "await sleep(700);" +
+                "continue;" +
+                "}" +
+
+                "window.__mobileSpellStatus='입력창 찾는 중...';" +
+                "let input=getInput(card);" +
+
+                "if(!input){" +
+                "let count=card.querySelectorAll('input[name=\"input_answer\"]').length;" +
+                "window.__mobileSpellStatus='입력창 찾기 실패: 현재 카드 입력창 '+count+'개, 표시되는 입력창 없음';" +
                 "await sleep(1000);" +
                 "continue;" +
                 "}" +
 
+                "window.__mobileSpellStatus='단어 데이터 확인 중...';" +
+                "let words=window.__classcardWords||[];" +
+
+                "if(!window.__classcardWordsReady || !words.length){" +
+                "window.__mobileSpellStatus=window.__classcardCaptureStatus||'단어 데이터 준비 대기 중...';" +
+                "await sleep(1000);" +
+                "continue;" +
+                "}" +
+
+                "window.__mobileSpellStatus='정답 검색 중...';" +
                 "let found=words.find(w=>norm(w.ko)===norm(prompt) || norm(w.en)===norm(prompt));" +
 
                 "if(!found){" +
-                "console.log('스펠 정답을 찾지 못했습니다:',prompt);" +
-                "break;" +
+                "window.__mobileSpellStatus='정답 찾기 실패: '+prompt;" +
+                "await sleep(1500);" +
+                "continue;" +
                 "}" +
 
                 "let answer=norm(found.ko)===norm(prompt)?found.en:found.ko;" +
 
-                "if(!answer)break;" +
+                "if(!answer){" +
+                "window.__mobileSpellStatus='정답 데이터가 비어 있습니다.';" +
+                "await sleep(1000);" +
+                "continue;" +
+                "}" +
 
-                "await sleep(700);" +
+                "window.__mobileSpellStatus='정답 확인 완료 · 입력 준비 중...';" +
+                "await sleep(400);" +
 
                 "if(!window.__mobileSpellRunning || isComplete())break;" +
                 "if(getCard()!==card)continue;" +
@@ -702,21 +729,23 @@ public class MainActivity extends Activity {
                 "input=getInput(card);" +
 
                 "if(!input){" +
-                "console.log('정답 입력 직전에 보이는 입력창이 사라졌습니다.');" +
-                "await sleep(300);" +
+                "window.__mobileSpellStatus='입력 직전 실패: 입력창이 사라졌습니다.';" +
+                "await sleep(500);" +
                 "continue;" +
                 "}" +
 
+                "window.__mobileSpellStatus='입력창 포커스 설정 중...';" +
                 "input.scrollIntoView({block:'center'});" +
                 "input.click();" +
                 "input.focus();" +
 
                 "if(document.activeElement!==input){" +
-                "console.log('입력창 포커스 실패. 제출하지 않습니다.');" +
-                "await sleep(500);" +
+                "window.__mobileSpellStatus='입력 실패: 입력창 포커스를 얻지 못했습니다.';" +
+                "await sleep(700);" +
                 "continue;" +
                 "}" +
 
+                "window.__mobileSpellStatus='정답 입력 중...';" +
                 "let setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;" +
                 "setter.call(input,String(answer));" +
 
@@ -726,19 +755,21 @@ public class MainActivity extends Activity {
 
                 "input.dispatchEvent(new Event('change',{bubbles:true}));" +
 
-                "await sleep(300);" +
+                "await sleep(400);" +
 
-                "if(!visible(input) || document.activeElement!==input || input.value!==String(answer)){" +
-                "console.log('정답 입력 검증 실패. 확인 버튼을 누르지 않습니다.');" +
-                "await sleep(500);" +
+                "if(!visible(input) || input.value!==String(answer)){" +
+                "window.__mobileSpellStatus='입력 검증 실패: 입력창 값이 유지되지 않았습니다.';" +
+                "await sleep(700);" +
                 "continue;" +
                 "}" +
 
+                "window.__mobileSpellStatus='정답 입력 확인 완료 · 제출 준비 중...';" +
                 "let submit=getSubmit();" +
 
                 "if(!submit){" +
-                "console.log('확인 버튼을 찾지 못했습니다.');" +
-                "break;" +
+                "window.__mobileSpellStatus='제출 실패: 확인 버튼을 찾지 못했습니다.';" +
+                "await sleep(1000);" +
+                "continue;" +
                 "}" +
 
                 "await sleep(200);" +
@@ -746,46 +777,53 @@ public class MainActivity extends Activity {
                 "if(!window.__mobileSpellRunning)break;" +
 
                 "if(getCard()!==card || !visible(input) || input.value!==String(answer)){" +
-                "console.log('제출 직전 입력 상태가 변경되어 제출을 취소했습니다.');" +
+                "window.__mobileSpellStatus='제출 취소: 제출 전 입력 상태가 변경됐습니다.';" +
                 "continue;" +
                 "}" +
 
+                "window.__mobileSpellStatus='정답 제출 중...';" +
                 "submit.click();" +
 
                 "let result=await waitForCardChange(card,prompt);" +
 
                 "if(result==='stopped')break;" +
-                "if(result==='complete')break;" +
-
-                "if(result==='waiting'){" +
-
-                "let next=getNext();" +
-
-                "if(next){" +
-
-                "next.click();" +
-
-                "result=await waitForCardChange(card,prompt);" +
-
-                "if(result==='stopped')break;" +
-                "if(result==='complete')break;" +
-
-                "if(result==='waiting'){" +
-                "console.log('오답 처리 후에도 다음 카드로 이동하지 않았습니다.');" +
+                "if(result==='complete'){" +
+                "window.__mobileSpellStatus='스펠 학습 완료';" +
                 "break;" +
                 "}" +
 
-                "}else{" +
+                "if(result==='waiting'){" +
+                "window.__mobileSpellStatus='제출 후 결과 대기 중...';" +
+                "let next=getNext();" +
 
-                "console.log('제출 후 카드 이동 또는 오답 버튼을 확인하지 못했습니다.');" +
+                "if(next){" +
+                "window.__mobileSpellStatus='오답 버튼 확인 · 다음 문제로 이동 중...';" +
+                "next.click();" +
+                "result=await waitForCardChange(card,prompt);" +
+                "if(result==='stopped')break;" +
+                "if(result==='complete'){" +
+                "window.__mobileSpellStatus='스펠 학습 완료';" +
                 "break;" +
-
+                "}" +
+                "if(result==='waiting'){" +
+                "window.__mobileSpellStatus='이동 실패: 오답 버튼을 눌렀지만 다음 문제로 바뀌지 않았습니다.';" +
+                "await sleep(1500);" +
+                "break;" +
+                "}" +
+                "}else{" +
+                "window.__mobileSpellStatus='이동 실패: 제출 후 카드와 다음 버튼이 모두 확인되지 않았습니다.';" +
+                "await sleep(1500);" +
+                "break;" +
                 "}" +
                 "}" +
 
                 "processed++;" +
+                "window.__mobileSpellStatus='문제 처리 완료: '+processed+'개';" +
 
-                "if(processed>500)break;" +
+                "if(processed>500){" +
+                "window.__mobileSpellStatus='중단: 처리 제한에 도달했습니다.';" +
+                "break;" +
+                "}" +
 
                 "await sleep(300);" +
                 "}" +
@@ -793,30 +831,31 @@ public class MainActivity extends Activity {
                 "if(!window.__mobileSpellRunning)break;" +
 
                 "if(round<rounds && isComplete()){" +
-
                 "let nextPercent=document.querySelector('#study_end > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > a');" +
-
-                "if(!nextPercent)break;" +
-
+                "if(!nextPercent){" +
+                "window.__mobileSpellStatus='다음 반복 버튼을 찾지 못했습니다.';" +
+                "break;" +
+                "}" +
+                "window.__mobileSpellStatus='다음 반복 시작 중...';" +
                 "nextPercent.click();" +
                 "await sleep(1500);" +
-
                 "}" +
                 "}" +
 
                 "}catch(error){" +
-
+                "window.__mobileSpellStatus='스펠 오류: '+(error&&error.message?error.message:String(error));" +
                 "console.error('스펠 자동화 오류:',error);" +
-
                 "}finally{" +
-
                 "stop();" +
-
                 "}" +
 
                 "})();";
 
-        webView.evaluateJavascript(script, null);
+        webView.evaluateJavascript(script, result -> {
+            if (result == null) {
+                setStatus("스펠 스크립트 실행 결과를 받지 못했습니다.");
+            }
+        });
     }
 
     @Override
