@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.os.Handler;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
@@ -13,12 +14,13 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 import android.content.SharedPreferences;
+import android.animation.ObjectAnimator;
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.view.animation.DecelerateInterpolator;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -33,14 +35,18 @@ public class MainActivity extends Activity {
     private boolean recallEnabled = true;
     private boolean spellEnabled = true;
 
-    private int repeatPercent = 300;
+    private final int repeatPercent = 100;
 
     private String lastMode = "";
     private boolean automationStarted = false;
     private boolean captureInProgress = false;
 
     private TextView statusText;
+    private TextView statusLabel;
     private String lastDisplayedStatus = "";
+
+    private LinearLayout statusCard;
+    private ObjectAnimator pulseAnimator;
 
     private SharedPreferences preferences;
     private String savedWordsJson = "[]";
@@ -58,6 +64,30 @@ public class MainActivity extends Activity {
         }
     };
 
+    private int dp(float value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private GradientDrawable glassBackground() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(Color.argb(220, 255, 255, 255));
+        drawable.setCornerRadius(dp(25));
+        drawable.setStroke(dp(1), Color.argb(190, 255, 255, 255));
+        return drawable;
+    }
+
+    private GradientDrawable pageBackground() {
+        GradientDrawable drawable = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{
+                        Color.rgb(235, 241, 255),
+                        Color.rgb(244, 239, 255),
+                        Color.rgb(238, 245, 250)
+                }
+        );
+        return drawable;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -67,91 +97,85 @@ public class MainActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.WHITE);
+        root.setBackground(pageBackground());
 
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(16, 10, 16, 10);
-        panel.setBackgroundColor(Color.rgb(240, 243, 248));
+        LinearLayout topArea = new LinearLayout(this);
+        topArea.setOrientation(LinearLayout.VERTICAL);
+        topArea.setPadding(dp(18), dp(16), dp(18), dp(14));
 
-        TextView title = new TextView(this);
-        title.setText("클카모바일 자동 학습");
-        title.setTextSize(20);
-        title.setTextColor(Color.BLACK);
-        title.setGravity(Gravity.CENTER);
-        panel.addView(title);
+        TextView appTitle = new TextView(this);
+        appTitle.setText("클카모바일");
+        appTitle.setTextColor(Color.rgb(35, 43, 65));
+        appTitle.setTextSize(23);
+        appTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        appTitle.setGravity(Gravity.CENTER_VERTICAL);
+        appTitle.setPadding(dp(5), dp(4), dp(5), dp(13));
 
-        LinearLayout options = new LinearLayout(this);
-        options.setGravity(Gravity.CENTER);
+        topArea.addView(appTitle);
 
-        CheckBox memorize = new CheckBox(this);
-        memorize.setText("암기");
-        memorize.setChecked(true);
+        statusCard = new LinearLayout(this);
+        statusCard.setOrientation(LinearLayout.VERTICAL);
+        statusCard.setPadding(dp(19), dp(16), dp(19), dp(16));
+        statusCard.setBackground(glassBackground());
+        statusCard.setElevation(dp(8));
 
-        CheckBox recall = new CheckBox(this);
-        recall.setText("리콜");
-        recall.setChecked(true);
+        LinearLayout statusHeader = new LinearLayout(this);
+        statusHeader.setOrientation(LinearLayout.HORIZONTAL);
+        statusHeader.setGravity(Gravity.CENTER_VERTICAL);
 
-        CheckBox spell = new CheckBox(this);
-        spell.setText("스펠");
-        spell.setChecked(true);
+        TextView statusDot = new TextView(this);
+        statusDot.setText("●");
+        statusDot.setTextSize(15);
+        statusDot.setTextColor(Color.rgb(90, 190, 150));
 
-        options.addView(memorize);
-        options.addView(recall);
-        options.addView(spell);
-        panel.addView(options);
+        statusHeader.addView(statusDot);
 
-        memorize.setOnCheckedChangeListener((button, checked) -> {
-            memorizeEnabled = checked;
-            restartDetection();
-        });
+        TextView nowLabel = new TextView(this);
+        nowLabel.setText("  NOW");
+        nowLabel.setTextSize(11);
+        nowLabel.setTextColor(Color.rgb(115, 125, 150));
+        nowLabel.setTypeface(null, android.graphics.Typeface.BOLD);
 
-        recall.setOnCheckedChangeListener((button, checked) -> {
-            recallEnabled = checked;
-            restartDetection();
-        });
+        statusHeader.addView(nowLabel);
 
-        spell.setOnCheckedChangeListener((button, checked) -> {
-            spellEnabled = checked;
-            restartDetection();
-        });
-
-        LinearLayout repeatOptions = new LinearLayout(this);
-        repeatOptions.setGravity(Gravity.CENTER);
-
-        Button repeat100 = new Button(this);
-        repeat100.setText("100%");
-
-        Button repeat200 = new Button(this);
-        repeat200.setText("200%");
-
-        Button repeat300 = new Button(this);
-        repeat300.setText("300%");
-
-        repeatOptions.addView(repeat100);
-        repeatOptions.addView(repeat200);
-        repeatOptions.addView(repeat300);
-        panel.addView(repeatOptions);
-
-        repeat100.setOnClickListener(v -> setRepeat(100));
-        repeat200.setOnClickListener(v -> setRepeat(200));
-        repeat300.setOnClickListener(v -> setRepeat(300));
+        statusCard.addView(statusHeader);
 
         statusText = new TextView(this);
         statusText.setText("학습 화면을 기다리는 중...");
-        statusText.setTextColor(Color.DKGRAY);
-        statusText.setGravity(Gravity.CENTER);
-        statusText.setTextSize(14);
-        panel.addView(statusText);
+        statusText.setTextSize(18);
+        statusText.setTextColor(Color.rgb(35, 43, 65));
+        statusText.setTypeface(null, android.graphics.Typeface.BOLD);
+        statusText.setPadding(0, dp(10), 0, dp(3));
 
-        root.addView(panel);
+        statusCard.addView(statusText);
+
+        statusLabel = new TextView(this);
+        statusLabel.setText("클래스카드 학습 상태");
+        statusLabel.setTextSize(12);
+        statusLabel.setTextColor(Color.rgb(125, 133, 153));
+
+        statusCard.addView(statusLabel);
+
+        topArea.addView(statusCard);
+
+        root.addView(topArea);
 
         webView = new WebView(this);
+        webView.setBackgroundColor(Color.WHITE);
+
         root.addView(webView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1
         ));
 
         setContentView(root);
+
+        pulseAnimator = ObjectAnimator.ofFloat(statusDot, "alpha", 1f, 0.45f, 1f);
+        pulseAnimator.setDuration(1600);
+        pulseAnimator.setRepeatCount(ObjectAnimator.INFINITE);
+        pulseAnimator.setInterpolator(new DecelerateInterpolator());
+        pulseAnimator.start();
 
         WebSettings settings = webView.getSettings();
 
@@ -319,7 +343,28 @@ public class MainActivity extends Activity {
         if (message.equals(lastDisplayedStatus)) return;
 
         lastDisplayedStatus = message;
-        statusText.setText(message);
+
+        statusText.animate()
+                .alpha(0f)
+                .setDuration(130)
+                .withEndAction(() -> {
+                    statusText.setText(message);
+                    statusText.animate()
+                            .alpha(1f)
+                            .setDuration(220)
+                            .start();
+                })
+                .start();
+
+        if (message.contains("완료")) {
+            statusLabel.setText("학습 작업이 완료됐어요");
+        } else if (message.contains("실패") || message.contains("오류")) {
+            statusLabel.setText("확인이 필요한 상태예요");
+        } else if (message.contains("중")) {
+            statusLabel.setText("자동 학습이 진행되고 있어요");
+        } else {
+            statusLabel.setText("클래스카드 학습 상태");
+        }
     }
 
     private void pollSpellStatus() {
@@ -339,16 +384,6 @@ public class MainActivity extends Activity {
                     } catch (Exception ignored) {}
                 }
         );
-    }
-
-    private void setRepeat(int percent) {
-        repeatPercent = percent;
-
-        Toast.makeText(
-                this,
-                "반복 설정: " + percent + "%",
-                Toast.LENGTH_SHORT
-        ).show();
     }
 
     private void restartDetection() {
@@ -515,22 +550,18 @@ public class MainActivity extends Activity {
                 "clearInterval(window.__mobileRecallTimer);" +
                 "clearTimeout(window.__mobileRecallAnswerTimer);" +
                 "clearTimeout(window.__mobileRecallNextTimer);" +
-
                 "window.__mobileRecallRunning=true;" +
                 "let lastCard=null;" +
                 "let round=1;" +
                 "const rounds=" + rounds + ";" +
-
                 "const stop=()=>{" +
                 "clearInterval(window.__mobileRecallTimer);" +
                 "clearTimeout(window.__mobileRecallAnswerTimer);" +
                 "clearTimeout(window.__mobileRecallNextTimer);" +
                 "window.__mobileRecallRunning=false;" +
                 "};" +
-
                 "const run=()=>{" +
                 "if(!window.__mobileRecallRunning){stop();return;}" +
-
                 "let end=document.querySelector('#study_end');" +
                 "if(end && getComputedStyle(end).display!=='none' && end.getClientRects().length>0){" +
                 "if(round>=rounds){stop();return;}" +
@@ -538,32 +569,24 @@ public class MainActivity extends Activity {
                 "if(!nextPercent){stop();return;}" +
                 "round++;lastCard=null;nextPercent.click();return;" +
                 "}" +
-
                 "let card=document.querySelector('.CardItem.current.showing');" +
                 "if(!card || card===lastCard)return;" +
-
                 "let choices=[...card.querySelectorAll('.cc-table.middle.fill-parent-w,.cc-table.middle.fill-parent')];" +
                 "let answer=choices.find(item=>item.classList.contains('answer'));" +
                 "if(!answer)return;" +
-
                 "let handler=window.jQuery?._data(answer,'events')?.click?.[0]?.handler;" +
                 "if(!handler)return;" +
-
                 "lastCard=card;" +
-
                 "window.__mobileRecallAnswerTimer=setTimeout(()=>{" +
                 "if(!window.__mobileRecallRunning)return;" +
                 "if(document.querySelector('.CardItem.current.showing')!==card)return;" +
-
                 "let event=window.jQuery.Event('click');" +
                 "event.target=answer;event.currentTarget=answer;event.which=1;" +
                 "Object.defineProperty(event,'originalEvent',{" +
                 "value:{type:'click',isTrusted:true,target:answer,currentTarget:answer,which:1}," +
                 "configurable:true" +
                 "});" +
-
                 "handler.call(answer,event);" +
-
                 "window.__mobileRecallNextTimer=setTimeout(()=>{" +
                 "if(!window.__mobileRecallRunning)return;" +
                 "let next=document.querySelector('.btn-short-change-next');" +
@@ -571,7 +594,6 @@ public class MainActivity extends Activity {
                 "},800);" +
                 "},1200);" +
                 "};" +
-
                 "run();" +
                 "window.__mobileRecallTimer=setInterval(run,200);" +
                 "})();";
@@ -596,7 +618,6 @@ public class MainActivity extends Activity {
                 "if(window.__mobileSpellRunning)return;" +
                 "window.__mobileSpellRunning=true;" +
                 "window.__mobileSpellStatus='스펠 자동화 시작';" +
-
                 "const sleep=ms=>new Promise(r=>setTimeout(r,ms));" +
                 "const norm=s=>(s||'').replace(/\\s+/g,' ').trim().toLowerCase();" +
                 "const visible=el=>{if(!el)return false;let r=el.getBoundingClientRect();let s=getComputedStyle(el);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0';};" +
@@ -604,14 +625,11 @@ public class MainActivity extends Activity {
                 "const input=c=>c?[...c.querySelectorAll('.spell-input:not(.hidden) input[name=\"input_answer\"],input[name=\"input_answer\"]')].find(visible):null;" +
                 "const prompt=c=>{let e=c&&c.querySelector('.spell-content.font-32,.spell-content,.card-quest-front');return visible(e)?e.innerText.trim():'';};" +
                 "const words=window.__classcardWords||[];" +
-
                 "const popup=()=>{" +
                 "let b=[...document.querySelectorAll('button,a,[role=\"button\"]')].find(e=>visible(e)&&e.textContent.trim()==='알겠습니다!');" +
                 "if(b)b.click();" +
                 "};" +
-
                 "const key=c=>((c&&c.dataset.idx)||'')+'|'+norm(prompt(c));" +
-
                 "const submit=i=>{" +
                 "let b=[...document.querySelectorAll('.btn-confirm,button[type=\"submit\"],#wrapper-learn .btn-primary')].find(visible);" +
                 "if(b){b.click();return true;}" +
@@ -624,65 +642,51 @@ public class MainActivity extends Activity {
                 "i.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));" +
                 "return true;" +
                 "};" +
-
                 "let rounds=" + (repeatPercent / 100) + ";" +
-
                 "for(let round=1;round<=rounds&&window.__mobileSpellRunning;round++){" +
                 "let lastKey='';" +
                 "while(window.__mobileSpellRunning){" +
-
                 "popup();" +
                 "let c=card();" +
-
                 "if(!c){" +
                 "let end=document.querySelector('#study_end');" +
                 "if(end&&visible(end))break;" +
                 "await sleep(300);" +
                 "continue;" +
                 "}" +
-
                 "let p=prompt(c);" +
                 "let i=input(c);" +
                 "if(!p||!i){await sleep(250);continue;}" +
-
                 "let currentKey=key(c);" +
                 "if(currentKey===lastKey){await sleep(200);continue;}" +
-
                 "let w=words.find(x=>norm(x.ko)===norm(p)||norm(x.en)===norm(p));" +
                 "if(!w){" +
                 "window.__mobileSpellStatus='정답 데이터 없음: '+p;" +
                 "await sleep(700);" +
                 "continue;" +
                 "}" +
-
                 "let answer=norm(w.ko)===norm(p)?w.en:w.ko;" +
                 "lastKey=currentKey;" +
                 "window.__mobileSpellStatus='입력 준비 중: '+p;" +
-
                 "i.focus();" +
                 "i.click();" +
                 "try{ClasscardBridge.sendSpellAnswer(answer);}catch(e){}" +
-
                 "let filled=false;" +
                 "for(let t=0;t<30;t++){" +
                 "await sleep(200);" +
                 "if(!window.__mobileSpellRunning)break;" +
                 "if(i.value===answer){filled=true;break;}" +
                 "}" +
-
                 "if(!filled){" +
                 "lastKey='';" +
                 "window.__mobileSpellStatus='입력 확인 실패';" +
                 "await sleep(500);" +
                 "continue;" +
                 "}" +
-
                 "window.__mobileSpellStatus='입력 확인 완료';" +
                 "await sleep(300);" +
-
                 "submit(i);" +
                 "window.__mobileSpellStatus='정답 제출 중';" +
-
                 "let changed=false;" +
                 "for(let t=0;t<40;t++){" +
                 "await sleep(150);" +
@@ -693,7 +697,6 @@ public class MainActivity extends Activity {
                 "break;" +
                 "}" +
                 "}" +
-
                 "if(!changed){" +
                 "let n=[...document.querySelectorAll('.btn-short-change-next')].find(visible);" +
                 "if(n){" +
@@ -709,19 +712,16 @@ public class MainActivity extends Activity {
                 "}" +
                 "}" +
                 "}" +
-
                 "if(!changed){" +
                 "lastKey='';" +
                 "window.__mobileSpellStatus='다음 문제 이동 실패';" +
                 "await sleep(1000);" +
                 "continue;" +
                 "}" +
-
                 "window.__mobileSpellStatus='문제 처리 완료';" +
                 "await sleep(250);" +
                 "}" +
                 "}" +
-
                 "window.__mobileSpellStatus='스펠 반복 완료';" +
                 "window.__mobileSpellRunning=false;" +
                 "})();";
@@ -741,6 +741,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacks(detector);
+
+        if (pulseAnimator != null) {
+            pulseAnimator.cancel();
+        }
+
         stopCurrentAutomation();
 
         if (webView != null) {
