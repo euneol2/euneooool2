@@ -6,21 +6,27 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.graphics.Color;
 import android.view.Gravity;
-import android.widget.Button;
-import android.widget.CheckBox;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
+import android.content.SharedPreferences;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.json.JSONTokener;
 
 public class MainActivity extends Activity {
 
     private WebView webView;
-    private Handler handler = new Handler();
+    private final Handler handler = new Handler();
 
     private boolean memorizeEnabled = true;
     private boolean recallEnabled = true;
@@ -30,9 +36,14 @@ public class MainActivity extends Activity {
 
     private String lastMode = "";
     private boolean automationStarted = false;
+    private boolean captureInProgress = false;
 
     private TextView statusText;
     private String lastDisplayedStatus = "";
+
+    private SharedPreferences preferences;
+    private String savedWordsJson = "[]";
+    private int savedWordCount = 0;
 
     private final Runnable detector = new Runnable() {
         @Override
@@ -49,6 +60,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        preferences = getSharedPreferences("classcard_word_memory", MODE_PRIVATE);
+        loadSavedWords();
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -157,6 +171,8 @@ public class MainActivity extends Activity {
 
         CookieManager.getInstance().setAcceptCookie(true);
 
+        webView.addJavascriptInterface(new WordBridge(), "ClasscardBridge");
+
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient());
 
@@ -169,11 +185,105 @@ public class MainActivity extends Activity {
         handler.postDelayed(detector, 1500);
     }
 
+    private class WordBridge {
+
+        @JavascriptInterface
+        public void saveWords(String json) {
+            runOnUiThread(() -> storeWords(json));
+        }
+
+        @JavascriptInterface
+        public void captureFailed(String message) {
+            runOnUiThread(() -> {
+                captureInProgress = false;
+                if (message != null && !message.isEmpty()) {
+                    setStatus(message);
+                }
+            });
+        }
+    }
+
+    private void loadSavedWords() {
+        savedWordsJson = preferences.getString("words", "[]");
+        validateSavedWords();
+    }
+
+    private void validateSavedWords() {
+        try {
+            JSONArray array = new JSONArray(savedWordsJson);
+            JSONArray valid = new JSONArray();
+
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject item = array.optJSONObject(i);
+                if (item == null) continue;
+
+                String en = item.optString("en", "").trim();
+                String ko = item.optString("ko", "").trim();
+
+                if (en.isEmpty() || ko.isEmpty()) continue;
+
+                JSONObject word = new JSONObject();
+                word.put("en", en);
+                word.put("ko", ko);
+                valid.put(word);
+            }
+
+            savedWordsJson = valid.toString();
+            savedWordCount = valid.length();
+
+        } catch (Exception e) {
+            savedWordsJson = "[]";
+            savedWordCount = 0;
+        }
+    }
+
+    private void storeWords(String json) {
+        try {
+            JSONArray array = new JSONArray(json);
+            JSONArray valid = new JSONArray();
+
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject item = array.optJSONObject(i);
+                if (item == null) continue;
+
+                String en = item.optString("en", "").trim();
+                String ko = item.optString("ko", "").trim();
+
+                if (en.isEmpty() || ko.isEmpty()) continue;
+
+                JSONObject word = new JSONObject();
+                word.put("en", en);
+                word.put("ko", ko);
+                valid.put(word);
+            }
+
+            if (valid.length() == 0) {
+                captureInProgress = false;
+                setStatus("단어 수집 실패: 저장할 단어가 없습니다.");
+                return;
+            }
+
+            savedWordsJson = valid.toString();
+            savedWordCount = valid.length();
+
+            preferences.edit()
+                    .putString("words", savedWordsJson)
+                    .putInt("word_count", savedWordCount)
+                    .apply();
+
+            captureInProgress = false;
+
+            setStatus("단어 저장 완료: " + savedWordCount + "개");
+
+        } catch (Exception e) {
+            captureInProgress = false;
+            setStatus("단어 저장 오류: " + e.getMessage());
+        }
+    }
+
     private void setStatus(String message) {
         if (statusText == null) return;
-
         if (message == null || message.trim().isEmpty()) return;
-
         if (message.equals(lastDisplayedStatus)) return;
 
         lastDisplayedStatus = message;
@@ -190,16 +300,15 @@ public class MainActivity extends Activity {
 
                     String message = result;
 
-                    if (message.length() >= 2 &&
-                            message.startsWith("\"") &&
-                            message.endsWith("\"")) {
-                        message = message.substring(1, message.length() - 1);
+                    try {
+                        Object decoded = new JSONTokener(result).nextValue();
+                        if (decoded instanceof String) {
+                            message = (String) decoded;
+                        }
+                    } catch (Exception ignored) {
                     }
 
-                    message = message
-                            .replace("\\n", " ")
-                            .replace("\\\"", "\"")
-                            .trim();
+                    message = message.trim();
 
                     if (!message.isEmpty()) {
                         setStatus(message);
@@ -244,86 +353,121 @@ public class MainActivity extends Activity {
     }
 
     private void captureWordData() {
+        if (webView == null || captureInProgress) return;
 
+        captureInProgress = true;
+
+        String script =
+                "(()=>{" +
+                "if(window.__classcardCaptureRunning)return 'waiting';" +
+                "if(window.__classcardWordsReady && window.__classcardWords?.length){" +
+                "try{ClasscardBridge.saveWords(JSON.stringify(window.__classcardWords));}catch(e){}" +
+                "return 'ready';" +
+                "}" +
+
+                "let root=document.querySelector('#tab_set_all');" +
+                "if(!root)return 'missing';" +
+
+                "let rows=root.querySelectorAll(':scope > div:nth-child(2) > div');" +
+                "if(!rows.length)return 'missing';" +
+
+                "let toggle=root.querySelector('.card-list-title > div > div:nth-child(1) > a');" +
+                "if(!toggle)return 'missing';" +
+
+                "let words=[];" +
+                "for(let i=0;i<rows.length;i++){" +
+                "let row=rows[i];" +
+                "let en=row.querySelector('div:nth-child(4) > div:nth-child(1) > div:nth-child(1) > div > div');" +
+                "if(!en)continue;" +
+                "let english=(en.innerText||en.textContent||'').trim();" +
+                "if(english)words.push({en:english,ko:''});" +
+                "}" +
+
+                "if(!words.length)return 'missing';" +
+
+                "window.__classcardCaptureRunning=true;" +
+                "window.__classcardCaptureStatus='카드를 뒤집어 단어 뜻 수집 중...';" +
+                "toggle.click();" +
+
+                "setTimeout(()=>{" +
+                "try{" +
+                "let currentRoot=document.querySelector('#tab_set_all');" +
+                "let currentRows=currentRoot?currentRoot.querySelectorAll(':scope > div:nth-child(2) > div'):[];" +
+
+                "for(let i=0;i<currentRows.length && i<words.length;i++){" +
+                "let ko=currentRows[i].querySelector('div:nth-child(4) > div:nth-child(2) > div:nth-child(1) > div > div');" +
+                "if(ko)words[i].ko=(ko.innerText||ko.textContent||'').split('\\n')[0].trim();" +
+                "}" +
+
+                "let collected=words.filter(w=>w.en&&w.ko);" +
+                "window.__classcardWords=collected;" +
+                "window.__classcardWordsReady=collected.length>0;" +
+
+                "if(window.__classcardWordsReady){" +
+                "window.__classcardCaptureStatus='단어 수집 완료: '+collected.length+'개';" +
+                "try{ClasscardBridge.saveWords(JSON.stringify(collected));}catch(e){}" +
+                "}else{" +
+                "window.__classcardCaptureStatus='단어 뜻 수집 실패: 한국어 뜻을 찾지 못했습니다.';" +
+                "try{ClasscardBridge.captureFailed(window.__classcardCaptureStatus);}catch(e){}" +
+                "}" +
+
+                "}catch(e){" +
+                "window.__classcardWordsReady=false;" +
+                "window.__classcardCaptureStatus='단어 수집 오류: '+e.message;" +
+                "try{ClasscardBridge.captureFailed(window.__classcardCaptureStatus);}catch(ignore){}" +
+                "}finally{" +
+                "let restoreRoot=document.querySelector('#tab_set_all');" +
+                "let restoreToggle=restoreRoot?restoreRoot.querySelector('.card-list-title > div > div:nth-child(1) > a'):null;" +
+                "if(restoreToggle)restoreToggle.click();" +
+                "window.__classcardCaptureRunning=false;" +
+                "}" +
+                "},1000);" +
+
+                "return 'started';" +
+                "})()";
+
+        webView.evaluateJavascript(script, result -> {
+            String value = result == null ? "" : result.replace("\"", "");
+
+            if (value.equals("missing")) {
+                captureInProgress = false;
+            } else if (value.equals("ready")) {
+                handler.postDelayed(() -> {
+                    if (webView != null) {
+                        webView.evaluateJavascript(
+                                "JSON.stringify(window.__classcardWords||[])",
+                                jsonResult -> {
+                                    try {
+                                        Object decoded = new JSONTokener(jsonResult).nextValue();
+                                        if (decoded instanceof String) {
+                                            storeWords((String) decoded);
+                                        }
+                                    } catch (Exception ignored) {
+                                        captureInProgress = false;
+                                    }
+                                }
+                        );
+                    }
+                }, 100);
+            } else if (value.equals("started")) {
+                handler.postDelayed(() -> {
+                    if (captureInProgress) {
+                        captureInProgress = false;
+                    }
+                }, 5000);
+            } else if (value.equals("waiting")) {
+                captureInProgress = false;
+            } else {
+                captureInProgress = false;
+            }
+        });
+    }
+
+    private void detectStudyScreen() {
         if (webView == null) return;
 
         String script =
                 "(()=>{" +
-
-                "if(window.__classcardWordsReady && window.__classcardWords?.length)return 'ready';" +
-                "if(window.__classcardCaptureRunning)return 'waiting';" +
-
-                "let root=document.querySelector('#tab_set_all');" +
-
-                "if(!root){" +
-                "window.__classcardCaptureStatus='단어 목록 화면을 기다리는 중...';" +
-                "return 'missing';" +
-                "}" +
-
-                "let rows=root.querySelectorAll(':scope > div:nth-child(2) > div');" +
-
-                "if(!rows.length){" +
-                "window.__classcardCaptureStatus='단어 목록 항목을 찾지 못했습니다.';" +
-                "return 'missing';" +
-                "}" +
-
-                "window.__classcardCaptureRunning=true;" +
-                "window.__classcardCaptureStatus='단어 데이터 확인 중...';" +
-
-                "try{" +
-
-                "let words=[];" +
-
-                "for(let i=0;i<rows.length;i++){" +
-
-                "let row=rows[i];" +
-
-                "let en=row.querySelector('div:nth-child(4) > div:nth-child(1) > div:nth-child(1) > div > div');" +
-                "let ko=row.querySelector('div:nth-child(4) > div:nth-child(2) > div:nth-child(1) > div > div');" +
-
-                "if(!en || !ko)continue;" +
-
-                "let english=(en.textContent||'').trim();" +
-                "let korean=(ko.textContent||'').split('\\n')[0].trim();" +
-
-                "if(english && korean){" +
-                "words.push({en:english,ko:korean});" +
-                "}" +
-
-                "}" +
-
-                "if(words.length>0){" +
-                "window.__classcardWords=words;" +
-                "window.__classcardWordsReady=true;" +
-                "window.__classcardCaptureStatus='단어 데이터 수집 완료: '+words.length+'개';" +
-                "}else{" +
-                "window.__classcardWords=[];" +
-                "window.__classcardWordsReady=false;" +
-                "window.__classcardCaptureStatus='단어 뜻을 HTML에서 찾지 못했습니다. 추가 확인이 필요합니다.';" +
-                "}" +
-
-                "}catch(e){" +
-
-                "window.__classcardWordsReady=false;" +
-                "window.__classcardCaptureStatus='단어 데이터 수집 오류: '+e.message;" +
-                "console.error(e);" +
-
-                "}finally{" +
-                "window.__classcardCaptureRunning=false;" +
-                "}" +
-
-                "return window.__classcardWordsReady?'ready':'failed';" +
-
-                "})()";
-
-        webView.evaluateJavascript(script, null);
-    }
-
-    private void detectStudyScreen() {
-
-        String script =
-                "(()=>{" +
-
                 "let card=document.querySelector('.CardItem.current.showing');" +
                 "if(!card)return 'none';" +
 
@@ -331,55 +475,47 @@ public class MainActivity extends Activity {
                 "if(!el)return false;" +
                 "let r=el.getBoundingClientRect();" +
                 "let s=getComputedStyle(el);" +
-                "return r.width>0 && r.height>0 && " +
-                "s.display!=='none' && s.visibility!=='hidden' && s.opacity!=='0';" +
+                "return r.width>0 && r.height>0 && s.display!=='none' && s.visibility!=='hidden' && s.opacity!=='0';" +
                 "};" +
 
                 "let inputs=[...card.querySelectorAll('input[name=\"input_answer\"]')];" +
                 "let input=inputs.find(visible);" +
-
                 "let prompt=card.querySelector('.spell-content.font-32,.spell-content,.card-quest-front');" +
 
                 "if(input && !input.disabled && visible(prompt))return 'spell';" +
-
                 "if(card.querySelector('.cc-table.middle.fill-parent-w,.cc-table.middle.fill-parent'))return 'recall';" +
-
                 "if(card.querySelector('.btn_kown_o,.card-cover'))return 'memorize';" +
-
                 "return 'unknown';" +
-
                 "})()";
 
         webView.evaluateJavascript(script, result -> {
-
             if (result == null) return;
 
             String mode = result.replace("\"", "");
 
             if (mode.equals("none") || mode.equals("unknown")) {
-
-                if (automationStarted) {
-                    stopCurrentAutomation();
-                }
+                if (automationStarted) stopCurrentAutomation();
 
                 automationStarted = false;
                 lastMode = "";
                 return;
             }
 
-            if (automationStarted && mode.equals(lastMode)) {
+            if (mode.equals("spell") && savedWordCount == 0) {
+                automationStarted = false;
+                lastMode = "";
+                setStatus("스펠 대기 중: 단어 목록 화면에서 단어를 먼저 수집해 주세요.");
                 return;
             }
 
-            if (automationStarted) {
-                stopCurrentAutomation();
-            }
+            if (automationStarted && mode.equals(lastMode)) return;
+
+            if (automationStarted) stopCurrentAutomation();
 
             automationStarted = true;
             lastMode = mode;
 
             if (mode.equals("memorize")) {
-
                 if (memorizeEnabled) {
                     startMemorize();
                 } else {
@@ -387,7 +523,6 @@ public class MainActivity extends Activity {
                 }
 
             } else if (mode.equals("recall")) {
-
                 if (recallEnabled) {
                     startRecall();
                 } else {
@@ -395,7 +530,6 @@ public class MainActivity extends Activity {
                 }
 
             } else if (mode.equals("spell")) {
-
                 if (spellEnabled) {
                     startSpell();
                 } else {
@@ -406,52 +540,33 @@ public class MainActivity extends Activity {
     }
 
     private void startMemorize() {
-
         setStatus("암기 학습 자동 실행 중");
 
         int rounds = repeatPercent / 100;
 
         String script =
                 "(async function() {" +
-
                 "if(window.__mobileMemorizeRunning)return;" +
                 "window.__mobileMemorizeRunning=true;" +
-
                 "const sleep=ms=>new Promise(r=>setTimeout(r,ms));" +
                 "const rounds=" + rounds + ";" +
 
                 "try{" +
-
                 "for(let round=1;round<=rounds;round++){" +
-
                 "while(window.__mobileMemorizeRunning){" +
-
                 "let end=document.querySelector('#study_end');" +
                 "if(end && getComputedStyle(end).display!=='none' && end.getClientRects().length>0)break;" +
 
                 "let card=document.querySelector('.CardItem.showing.current');" +
-
-                "if(!card){" +
-                "await sleep(300);" +
-                "continue;" +
-                "}" +
+                "if(!card){await sleep(300);continue;}" +
 
                 "let cover=card.querySelector('.card-cover');" +
-
-                "if(cover){" +
-                "cover.click();" +
-                "await sleep(500);" +
-                "}" +
+                "if(cover){cover.click();await sleep(500);}" +
 
                 "let answer=card.querySelector('.btn_kown_o');" +
-
-                "if(!answer){" +
-                "await sleep(300);" +
-                "continue;" +
-                "}" +
+                "if(!answer){await sleep(300);continue;}" +
 
                 "await sleep(1000);" +
-
                 "if(!window.__mobileMemorizeRunning)break;" +
 
                 "answer=card.querySelector('.btn_kown_o');" +
@@ -462,42 +577,33 @@ public class MainActivity extends Activity {
 
                 "let next=document.querySelector('.btnNextCard2');" +
                 "if(next)next.click();" +
-
                 "await sleep(600);" +
                 "}" +
 
                 "if(!window.__mobileMemorizeRunning)break;" +
 
                 "if(round<rounds){" +
-
                 "let nextPercent=document.querySelector('#study_end > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > a');" +
-
                 "if(!nextPercent)break;" +
-
                 "nextPercent.click();" +
                 "await sleep(1500);" +
-
                 "}" +
                 "}" +
-
                 "}finally{" +
                 "window.__mobileMemorizeRunning=false;" +
                 "}" +
-
                 "})();";
 
         webView.evaluateJavascript(script, null);
     }
 
     private void startRecall() {
-
         setStatus("리콜 학습 자동 실행 중");
 
         int rounds = repeatPercent / 100;
 
         String script =
                 "(()=>{" +
-
                 "clearInterval(window.__mobileRecallTimer);" +
                 "clearTimeout(window.__mobileRecallAnswerTimer);" +
                 "clearTimeout(window.__mobileRecallNextTimer);" +
@@ -515,33 +621,21 @@ public class MainActivity extends Activity {
                 "};" +
 
                 "const run=()=>{" +
-
                 "if(!window.__mobileRecallRunning){stop();return;}" +
 
                 "let end=document.querySelector('#study_end');" +
-
                 "if(end && getComputedStyle(end).display!=='none' && end.getClientRects().length>0){" +
-
                 "if(round>=rounds){stop();return;}" +
-
                 "let nextPercent=document.querySelector('#study_end > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > a');" +
-
                 "if(!nextPercent){stop();return;}" +
-
-                "round++;" +
-                "lastCard=null;" +
-                "nextPercent.click();" +
-
-                "return;" +
+                "round++;lastCard=null;nextPercent.click();return;" +
                 "}" +
 
                 "let card=document.querySelector('.CardItem.current.showing');" +
-
                 "if(!card || card===lastCard)return;" +
 
                 "let choices=[...card.querySelectorAll('.cc-table.middle.fill-parent-w,.cc-table.middle.fill-parent')];" +
                 "let answer=choices.find(item=>item.classList.contains('answer'));" +
-
                 "if(!answer)return;" +
 
                 "let handler=window.jQuery?._data(answer,'events')?.click?.[0]?.handler;" +
@@ -550,15 +644,11 @@ public class MainActivity extends Activity {
                 "lastCard=card;" +
 
                 "window.__mobileRecallAnswerTimer=setTimeout(()=>{" +
-
                 "if(!window.__mobileRecallRunning)return;" +
                 "if(document.querySelector('.CardItem.current.showing')!==card)return;" +
 
                 "let event=window.jQuery.Event('click');" +
-                "event.target=answer;" +
-                "event.currentTarget=answer;" +
-                "event.which=1;" +
-
+                "event.target=answer;event.currentTarget=answer;event.which=1;" +
                 "Object.defineProperty(event,'originalEvent',{" +
                 "value:{type:'click',isTrusted:true,target:answer,currentTarget:answer,which:1}," +
                 "configurable:true" +
@@ -567,50 +657,61 @@ public class MainActivity extends Activity {
                 "handler.call(answer,event);" +
 
                 "window.__mobileRecallNextTimer=setTimeout(()=>{" +
-
                 "if(!window.__mobileRecallRunning)return;" +
-
                 "let next=document.querySelector('.btn-short-change-next');" +
-
                 "if(next && window.jQuery)window.jQuery(next).trigger('click');" +
-
                 "},800);" +
-
                 "},1200);" +
                 "};" +
 
                 "run();" +
                 "window.__mobileRecallTimer=setInterval(run,200);" +
-
                 "})();";
 
         webView.evaluateJavascript(script, null);
     }
 
     private void startSpell() {
+        if (savedWordCount == 0) {
+            setStatus("저장된 단어가 없습니다. 단어 목록에서 먼저 수집해 주세요.");
+            automationStarted = false;
+            lastMode = "";
+            return;
+        }
 
-        setStatus("스펠 자동화 준비 중...");
+        setStatus("저장된 단어 " + savedWordCount + "개 복구 중...");
 
         int rounds = repeatPercent / 100;
 
+        String restoreScript =
+                "window.__classcardWords=JSON.parse(" +
+                JSONObject.quote(savedWordsJson) +
+                ");" +
+                "window.__classcardWordsReady=true;" +
+                "window.__classcardCaptureStatus='저장된 단어 복구 완료: " +
+                savedWordCount + "개';";
+
+        webView.evaluateJavascript(restoreScript, restoreResult -> {
+            runSpellScript(rounds);
+        });
+    }
+
+    private void runSpellScript(int rounds) {
         String script =
                 "(async()=>{" +
-
                 "if(window.__mobileSpellRunning)return;" +
                 "window.__mobileSpellRunning=true;" +
                 "window.__mobileSpellStatus='스펠 자동화 시작';" +
 
                 "const sleep=ms=>new Promise(r=>setTimeout(r,ms));" +
                 "const rounds=" + rounds + ";" +
-
                 "const norm=s=>(s||'').replace(/\\s+/g,' ').trim().toLocaleLowerCase();" +
 
                 "const visible=el=>{" +
                 "if(!el)return false;" +
                 "let r=el.getBoundingClientRect();" +
                 "let s=getComputedStyle(el);" +
-                "return r.width>0 && r.height>0 && " +
-                "s.display!=='none' && s.visibility!=='hidden' && s.opacity!=='0';" +
+                "return r.width>0 && r.height>0 && s.display!=='none' && s.visibility!=='hidden' && s.opacity!=='0';" +
                 "};" +
 
                 "const stop=()=>{" +
@@ -618,17 +719,13 @@ public class MainActivity extends Activity {
                 "clearTimeout(window.__mobileSpellTimer);" +
                 "};" +
 
-                "const isComplete=()=>{" +
-                "let end=document.querySelector('#study_end');" +
-                "return visible(end);" +
-                "};" +
-
+                "const isComplete=()=>visible(document.querySelector('#study_end'));" +
                 "const getCard=()=>document.querySelector('.CardItem.current.showing');" +
 
                 "const getInput=card=>{" +
                 "if(!card)return null;" +
                 "let inputs=[...card.querySelectorAll('input[name=\"input_answer\"]')];" +
-                "return inputs.find(el=>visible(el) && !el.disabled && !el.readOnly && el.type!=='hidden')||null;" +
+                "return inputs.find(el=>visible(el)&&!el.disabled&&!el.readOnly&&el.type!=='hidden')||null;" +
                 "};" +
 
                 "const getPrompt=card=>{" +
@@ -636,19 +733,19 @@ public class MainActivity extends Activity {
                 "let selectors=['.spell-content.font-32','.spell-content','.card-quest-front'];" +
                 "for(let selector of selectors){" +
                 "let el=card.querySelector(selector);" +
-                "if(visible(el) && el.innerText.trim())return el.innerText.trim();" +
+                "if(visible(el)&&el.innerText.trim())return el.innerText.trim();" +
                 "}" +
                 "return '';" +
                 "};" +
 
                 "const getSubmit=()=>{" +
                 "let buttons=[...document.querySelectorAll('.btn-confirm')];" +
-                "return buttons.find(button=>visible(button) && !button.disabled && !button.closest('#study_end'))||null;" +
+                "return buttons.find(button=>visible(button)&&!button.disabled&&!button.closest('#study_end'))||null;" +
                 "};" +
 
                 "const getNext=()=>{" +
                 "let buttons=[...document.querySelectorAll('.btn-short-change-next')];" +
-                "return buttons.find(button=>visible(button) && !button.disabled && !button.closest('#study_end'))||null;" +
+                "return buttons.find(button=>visible(button)&&!button.disabled&&!button.closest('#study_end'))||null;" +
                 "};" +
 
                 "const waitForCardChange=async(card,prompt)=>{" +
@@ -656,172 +753,123 @@ public class MainActivity extends Activity {
                 "if(!window.__mobileSpellRunning)return 'stopped';" +
                 "if(isComplete())return 'complete';" +
                 "let current=getCard();" +
-                "if(current && (current!==card || norm(getPrompt(current))!==norm(prompt)))return 'changed';" +
+                "if(current&&(current!==card||norm(getPrompt(current))!==norm(prompt)))return 'changed';" +
                 "await sleep(150);" +
                 "}" +
                 "return 'waiting';" +
                 "};" +
 
                 "try{" +
+                "let words=window.__classcardWords||[];" +
+
+                "if(!window.__classcardWordsReady||!words.length){" +
+                "window.__mobileSpellStatus='저장된 단어 복구 실패';" +
+                "stop();return;" +
+                "}" +
+
+                "window.__mobileSpellStatus='단어 '+words.length+'개 확인 완료';" +
 
                 "for(let round=1;round<=rounds;round++){" +
-
                 "let processed=0;" +
 
                 "while(window.__mobileSpellRunning){" +
-
                 "if(isComplete()){" +
                 "window.__mobileSpellStatus='스펠 학습 완료';" +
                 "break;" +
                 "}" +
 
                 "let card=getCard();" +
-
                 "if(!card){" +
                 "window.__mobileSpellStatus='현재 문제 카드를 찾는 중...';" +
-                "await sleep(500);" +
-                "continue;" +
+                "await sleep(500);continue;" +
                 "}" +
 
-                "window.__mobileSpellStatus='문제 내용 확인 중...';" +
                 "let prompt=getPrompt(card);" +
-
                 "if(!prompt){" +
-                "window.__mobileSpellStatus='문제 내용 읽기 실패: 문제 선택자를 확인해야 합니다.';" +
-                "await sleep(700);" +
-                "continue;" +
+                "window.__mobileSpellStatus='문제 내용 읽기 실패';" +
+                "await sleep(700);continue;" +
                 "}" +
 
-                "window.__mobileSpellStatus='입력창 찾는 중...';" +
                 "let input=getInput(card);" +
-
                 "if(!input){" +
-                "let count=card.querySelectorAll('input[name=\"input_answer\"]').length;" +
-                "window.__mobileSpellStatus='입력창 찾기 실패: 현재 카드 입력창 '+count+'개, 표시되는 입력창 없음';" +
-                "await sleep(1000);" +
-                "continue;" +
+                "window.__mobileSpellStatus='입력창 찾기 실패';" +
+                "await sleep(1000);continue;" +
                 "}" +
 
-                "window.__mobileSpellStatus='단어 데이터 확인 중...';" +
-                "let words=window.__classcardWords||[];" +
-
-                "if(!window.__classcardWordsReady || !words.length){" +
-                "window.__mobileSpellStatus=window.__classcardCaptureStatus||'단어 데이터 준비 대기 중...';" +
-                "await sleep(1000);" +
-                "continue;" +
-                "}" +
-
-                "window.__mobileSpellStatus='정답 검색 중...';" +
-                "let found=words.find(w=>norm(w.ko)===norm(prompt) || norm(w.en)===norm(prompt));" +
-
+                "let found=words.find(w=>norm(w.ko)===norm(prompt)||norm(w.en)===norm(prompt));" +
                 "if(!found){" +
                 "window.__mobileSpellStatus='정답 찾기 실패: '+prompt;" +
-                "await sleep(1500);" +
-                "continue;" +
+                "await sleep(1500);continue;" +
                 "}" +
 
                 "let answer=norm(found.ko)===norm(prompt)?found.en:found.ko;" +
-
                 "if(!answer){" +
                 "window.__mobileSpellStatus='정답 데이터가 비어 있습니다.';" +
-                "await sleep(1000);" +
-                "continue;" +
+                "await sleep(1000);continue;" +
                 "}" +
 
-                "window.__mobileSpellStatus='정답 확인 완료 · 입력 준비 중...';" +
-                "await sleep(400);" +
-
-                "if(!window.__mobileSpellRunning || isComplete())break;" +
+                "await sleep(300);" +
+                "if(!window.__mobileSpellRunning||isComplete())break;" +
                 "if(getCard()!==card)continue;" +
 
                 "input=getInput(card);" +
+                "if(!input){await sleep(500);continue;}" +
 
-                "if(!input){" +
-                "window.__mobileSpellStatus='입력 직전 실패: 입력창이 사라졌습니다.';" +
-                "await sleep(500);" +
-                "continue;" +
-                "}" +
-
-                "window.__mobileSpellStatus='입력창 포커스 설정 중...';" +
                 "input.scrollIntoView({block:'center'});" +
-                "input.click();" +
-                "input.focus();" +
+                "input.click();input.focus();" +
 
                 "if(document.activeElement!==input){" +
-                "window.__mobileSpellStatus='입력 실패: 입력창 포커스를 얻지 못했습니다.';" +
-                "await sleep(700);" +
-                "continue;" +
+                "window.__mobileSpellStatus='입력창 포커스 실패';" +
+                "await sleep(700);continue;" +
                 "}" +
 
-                "window.__mobileSpellStatus='정답 입력 중...';" +
                 "let setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;" +
                 "setter.call(input,String(answer));" +
-
-                "input.dispatchEvent(new InputEvent('input',{" +
-                "bubbles:true,inputType:'insertText',data:String(answer)" +
-                "}));" +
-
+                "input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:String(answer)}));" +
                 "input.dispatchEvent(new Event('change',{bubbles:true}));" +
 
                 "await sleep(400);" +
 
-                "if(!visible(input) || input.value!==String(answer)){" +
-                "window.__mobileSpellStatus='입력 검증 실패: 입력창 값이 유지되지 않았습니다.';" +
-                "await sleep(700);" +
-                "continue;" +
+                "if(!visible(input)||input.value!==String(answer)){" +
+                "window.__mobileSpellStatus='입력 검증 실패';" +
+                "await sleep(700);continue;" +
                 "}" +
 
-                "window.__mobileSpellStatus='정답 입력 확인 완료 · 제출 준비 중...';" +
                 "let submit=getSubmit();" +
-
                 "if(!submit){" +
-                "window.__mobileSpellStatus='제출 실패: 확인 버튼을 찾지 못했습니다.';" +
-                "await sleep(1000);" +
-                "continue;" +
+                "window.__mobileSpellStatus='확인 버튼을 찾지 못했습니다.';" +
+                "await sleep(1000);continue;" +
                 "}" +
-
-                "await sleep(200);" +
 
                 "if(!window.__mobileSpellRunning)break;" +
-
-                "if(getCard()!==card || !visible(input) || input.value!==String(answer)){" +
-                "window.__mobileSpellStatus='제출 취소: 제출 전 입력 상태가 변경됐습니다.';" +
-                "continue;" +
-                "}" +
+                "if(getCard()!==card||!visible(input)||input.value!==String(answer))continue;" +
 
                 "window.__mobileSpellStatus='정답 제출 중...';" +
                 "submit.click();" +
 
                 "let result=await waitForCardChange(card,prompt);" +
-
                 "if(result==='stopped')break;" +
                 "if(result==='complete'){" +
-                "window.__mobileSpellStatus='스펠 학습 완료';" +
-                "break;" +
+                "window.__mobileSpellStatus='스펠 학습 완료';break;" +
                 "}" +
 
                 "if(result==='waiting'){" +
-                "window.__mobileSpellStatus='제출 후 결과 대기 중...';" +
                 "let next=getNext();" +
-
                 "if(next){" +
-                "window.__mobileSpellStatus='오답 버튼 확인 · 다음 문제로 이동 중...';" +
+                "window.__mobileSpellStatus='오답 처리 중...';" +
                 "next.click();" +
                 "result=await waitForCardChange(card,prompt);" +
                 "if(result==='stopped')break;" +
                 "if(result==='complete'){" +
-                "window.__mobileSpellStatus='스펠 학습 완료';" +
-                "break;" +
+                "window.__mobileSpellStatus='스펠 학습 완료';break;" +
                 "}" +
                 "if(result==='waiting'){" +
-                "window.__mobileSpellStatus='이동 실패: 오답 버튼을 눌렀지만 다음 문제로 바뀌지 않았습니다.';" +
-                "await sleep(1500);" +
-                "break;" +
+                "window.__mobileSpellStatus='다음 문제 이동 실패';" +
+                "await sleep(1500);break;" +
                 "}" +
                 "}else{" +
-                "window.__mobileSpellStatus='이동 실패: 제출 후 카드와 다음 버튼이 모두 확인되지 않았습니다.';" +
-                "await sleep(1500);" +
-                "break;" +
+                "window.__mobileSpellStatus='다음 문제 버튼을 찾지 못했습니다.';" +
+                "await sleep(1500);break;" +
                 "}" +
                 "}" +
 
@@ -829,7 +877,7 @@ public class MainActivity extends Activity {
                 "window.__mobileSpellStatus='문제 처리 완료: '+processed+'개';" +
 
                 "if(processed>500){" +
-                "window.__mobileSpellStatus='중단: 처리 제한에 도달했습니다.';" +
+                "window.__mobileSpellStatus='처리 제한에 도달했습니다.';" +
                 "break;" +
                 "}" +
 
@@ -838,7 +886,7 @@ public class MainActivity extends Activity {
 
                 "if(!window.__mobileSpellRunning)break;" +
 
-                "if(round<rounds && isComplete()){" +
+                "if(round<rounds&&isComplete()){" +
                 "let nextPercent=document.querySelector('#study_end > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > a');" +
                 "if(!nextPercent){" +
                 "window.__mobileSpellStatus='다음 반복 버튼을 찾지 못했습니다.';" +
@@ -856,7 +904,6 @@ public class MainActivity extends Activity {
                 "}finally{" +
                 "stop();" +
                 "}" +
-
                 "})();";
 
         webView.evaluateJavascript(script, result -> {
@@ -886,11 +933,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacks(detector);
-
         stopCurrentAutomation();
 
         if (webView != null) {
             webView.stopLoading();
+            webView.removeJavascriptInterface("ClasscardBridge");
             webView.setWebChromeClient(null);
             webView.setWebViewClient(null);
             webView.destroy();
