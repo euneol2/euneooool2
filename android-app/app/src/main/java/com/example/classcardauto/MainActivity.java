@@ -1,4 +1,3 @@
-
 package com.example.classcardauto;
 
 import android.app.Activity;
@@ -200,14 +199,16 @@ public class MainActivity extends Activity {
                         "const visible=el=>el&&el.getClientRects().length>0&&getComputedStyle(el).display!=='none'&&getComputedStyle(el).visibility!=='hidden';" +
                         "const input=[...card.querySelectorAll('.spell-input:not(.hidden) input[name=\"input_answer\"],input[name=\"input_answer\"]')].find(visible);" +
                         "if(!input)return false;" +
-                        "const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;" +
                         "input.focus();" +
                         "input.click();" +
-                        "setter.call(input,'');" +
-                        "input.dispatchEvent(new Event('input',{bubbles:true}));" +
+                        "input.select();" +
+                        "let inserted=false;" +
+                        "try{inserted=document.execCommand('insertText',false,answer);}catch(e){}" +
+                        "if(!inserted||input.value!==answer){" +
+                        "const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;" +
                         "setter.call(input,answer);" +
-                        "input.dispatchEvent(new Event('input',{bubbles:true}));" +
-                        "input.dispatchEvent(new Event('change',{bubbles:true}));" +
+                        "input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:answer}));" +
+                        "}" +
                         "return input.value===answer;" +
                         "})()";
 
