@@ -30,6 +30,7 @@ public class MainActivity extends Activity {
 
     private String lastMode = "";
     private boolean automationStarted = false;
+    private boolean wordDataLoaded = false;
 
     private TextView statusText;
 
@@ -37,6 +38,7 @@ public class MainActivity extends Activity {
         @Override
         public void run() {
             if (webView != null) {
+                captureWordData();
                 detectStudyScreen();
             }
             handler.postDelayed(this, 1000);
@@ -81,7 +83,6 @@ public class MainActivity extends Activity {
         options.addView(memorize);
         options.addView(recall);
         options.addView(spell);
-
         panel.addView(options);
 
         memorize.setOnCheckedChangeListener((button, checked) -> {
@@ -114,7 +115,6 @@ public class MainActivity extends Activity {
         repeatOptions.addView(repeat100);
         repeatOptions.addView(repeat200);
         repeatOptions.addView(repeat300);
-
         panel.addView(repeatOptions);
 
         repeat100.setOnClickListener(v -> setRepeat(100));
@@ -125,8 +125,8 @@ public class MainActivity extends Activity {
         statusText.setText("학습 화면을 기다리는 중...");
         statusText.setTextColor(Color.DKGRAY);
         statusText.setGravity(Gravity.CENTER);
-
         panel.addView(statusText);
+
         root.addView(panel);
 
         webView = new WebView(this);
@@ -190,30 +190,78 @@ public class MainActivity extends Activity {
                 "(function() {" +
                 "window.__mobileMemorizeRunning = false;" +
                 "window.__mobileRecallRunning = false;" +
+                "window.__mobileSpellRunning = false;" +
+                "clearInterval(window.__mobileRecallTimer);" +
+                "clearTimeout(window.__mobileRecallAnswerTimer);" +
+                "clearTimeout(window.__mobileRecallNextTimer);" +
+                "clearTimeout(window.__mobileSpellTimer);" +
                 "})();",
                 null
         );
     }
 
+    private void captureWordData() {
+
+        if (wordDataLoaded || webView == null) return;
+
+        String script =
+                "(()=>{" +
+                "let root=document.querySelector('#tab_set_all');" +
+                "if(!root)return false;" +
+
+                "let rows=root.querySelectorAll(':scope > div:nth-child(2) > div');" +
+                "if(!rows.length)return false;" +
+
+                "let toggle=root.querySelector('.card-list-title > div > div:nth-child(1) > a');" +
+                "if(!toggle)return false;" +
+
+                "let words=[];" +
+                "for(let i=1;i<=rows.length;i++){" +
+                "let row=rows[i-1];" +
+                "let en=row.querySelector('div:nth-child(4) > div:nth-child(1) > div:nth-child(1) > div > div');" +
+                "if(!en)continue;" +
+                "words.push({en:en.innerText.trim(),ko:''});" +
+                "}" +
+
+                "toggle.click();" +
+
+                "setTimeout(()=>{" +
+                "let current=root.querySelectorAll(':scope > div:nth-child(2) > div');" +
+                "for(let i=0;i<current.length && i<words.length;i++){" +
+                "let ko=current[i].querySelector('div:nth-child(4) > div:nth-child(2) > div:nth-child(1) > div > div');" +
+                "if(ko)words[i].ko=ko.innerText.split('\\n')[0].trim();" +
+                "}" +
+                "window.__classcardWords=words.filter(w=>w.en&&w.ko);" +
+                "toggle.click();" +
+                "},500);" +
+
+                "return true;" +
+                "})()";
+
+        webView.evaluateJavascript(script, result -> {
+            if ("true".equals(result)) {
+                wordDataLoaded = true;
+            }
+        });
+    }
+
     private void detectStudyScreen() {
 
         String script =
-                "(function() {" +
-                "var card = document.querySelector('.CardItem.current.showing, .CardItem.showing.current');" +
-                "if (!card) return 'none';" +
+                "(()=>{" +
+                "let card=document.querySelector('.CardItem.current.showing, .CardItem.showing.current');" +
+                "if(!card)return 'none';" +
 
-                "var visible = function(el) {" +
-                "return !!el && el.getClientRects().length > 0 && getComputedStyle(el).display !== 'none';" +
-                "};" +
+                "let visible=el=>!!el && el.getClientRects().length>0 && getComputedStyle(el).display!=='none';" +
 
-                "var input = card.querySelector('.spell-input:not(.hidden) input[name=\"input_answer\"], input[name=\"input_answer\"]');" +
-                "var prompt = card.querySelector('.spell-content.font-32, .spell-content, .card-quest-front');" +
+                "let input=card.querySelector('input[name=\"input_answer\"],input.input-answer');" +
+                "let prompt=card.querySelector('.spell-content.font-32,.spell-content,.card-quest-front');" +
 
-                "if ((input && visible(input)) || (prompt && visible(prompt) && card.querySelector('input[type=\"text\"]'))) return 'spell';" +
+                "if(input && visible(input) && prompt && visible(prompt))return 'spell';" +
 
-                "if (card.querySelector('.cc-table.middle.fill-parent-w, .cc-table.middle.fill-parent')) return 'recall';" +
+                "if(card.querySelector('.cc-table.middle.fill-parent-w,.cc-table.middle.fill-parent'))return 'recall';" +
 
-                "if (card.querySelector('.btn_kown_o, .card-cover')) return 'memorize';" +
+                "if(card.querySelector('.btn_kown_o,.card-cover'))return 'memorize';" +
 
                 "return 'unknown';" +
                 "})()";
@@ -265,7 +313,7 @@ public class MainActivity extends Activity {
             } else if (mode.equals("spell")) {
 
                 if (spellEnabled) {
-                    statusText.setText("스펠 학습 감지 · 정답 데이터 연결 필요");
+                    startSpell();
                 } else {
                     statusText.setText("스펠 학습 감지 · 비활성화 상태");
                 }
@@ -277,51 +325,66 @@ public class MainActivity extends Activity {
 
         statusText.setText("암기 학습 자동 실행 중");
 
+        int rounds = repeatPercent / 100;
+
         String script =
                 "(async function() {" +
-                "if (window.__mobileMemorizeRunning) return;" +
-                "window.__mobileMemorizeRunning = true;" +
+                "if(window.__mobileMemorizeRunning)return;" +
+                "window.__mobileMemorizeRunning=true;" +
 
-                "const sleep = ms => new Promise(r => setTimeout(r, ms));" +
+                "const sleep=ms=>new Promise(r=>setTimeout(r,ms));" +
+                "const rounds=" + rounds + ";" +
 
-                "try {" +
-                "while (window.__mobileMemorizeRunning) {" +
+                "try{" +
+                "for(let round=1;round<=rounds;round++){" +
 
-                "var end = document.querySelector('#study_end');" +
-                "if (end && getComputedStyle(end).display !== 'none' && end.getClientRects().length > 0) break;" +
+                "while(window.__mobileMemorizeRunning){" +
 
-                "var card = document.querySelector('.CardItem.showing.current');" +
-                "if (!card) break;" +
+                "let end=document.querySelector('#study_end');" +
+                "if(end && getComputedStyle(end).display!=='none' && end.getClientRects().length>0)break;" +
 
-                "var cover = card.querySelector('.card-cover');" +
-                "if (cover) {" +
-                "cover.click();" +
-                "await sleep(500);" +
-                "}" +
-
-                "var answer = card.querySelector('.btn_kown_o');" +
-                "if (!answer) {" +
+                "let card=document.querySelector('.CardItem.showing.current');" +
+                "if(!card){" +
                 "await sleep(300);" +
                 "continue;" +
                 "}" +
 
-                "await sleep(1200);" +
+                "let cover=card.querySelector('.card-cover');" +
+                "if(cover){" +
+                "cover.click();" +
+                "await sleep(500);" +
+                "}" +
 
-                "if (!window.__mobileMemorizeRunning) break;" +
-                "answer = card.querySelector('.btn_kown_o');" +
-                "if (!answer) continue;" +
+                "let answer=card.querySelector('.btn_kown_o');" +
+                "if(!answer){" +
+                "await sleep(300);" +
+                "continue;" +
+                "}" +
+
+                "await sleep(1000);" +
+                "if(!window.__mobileMemorizeRunning)break;" +
+
+                "answer=card.querySelector('.btn_kown_o');" +
+                "if(!answer)continue;" +
 
                 "answer.click();" +
                 "await sleep(400);" +
 
-                "var next = document.querySelector('.btnNextCard2');" +
-                "if (!next) break;" +
-
-                "next.click();" +
+                "let next=document.querySelector('.btnNextCard2');" +
+                "if(next)next.click();" +
                 "await sleep(600);" +
                 "}" +
-                "} finally {" +
-                "window.__mobileMemorizeRunning = false;" +
+
+                "if(!window.__mobileMemorizeRunning)break;" +
+                "if(round<rounds){" +
+                "let nextPercent=document.querySelector('#study_end > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > a');" +
+                "if(!nextPercent)break;" +
+                "nextPercent.click();" +
+                "await sleep(1500);" +
+                "}" +
+                "}" +
+                "}finally{" +
+                "window.__mobileMemorizeRunning=false;" +
                 "}" +
                 "})();";
 
@@ -332,64 +395,184 @@ public class MainActivity extends Activity {
 
         statusText.setText("리콜 학습 자동 실행 중");
 
+        int rounds = repeatPercent / 100;
+
         String script =
-                "(function() {" +
+                "(()=>{" +
 
-                "if (window.__mobileRecallRunning) return;" +
-                "window.__mobileRecallRunning = true;" +
+                "clearInterval(window.__mobileRecallTimer);" +
+                "clearTimeout(window.__mobileRecallAnswerTimer);" +
+                "clearTimeout(window.__mobileRecallNextTimer);" +
 
-                "var lastCard = null;" +
+                "window.__mobileRecallRunning=true;" +
+                "let lastCard=null;" +
+                "let round=1;" +
+                "const rounds=" + rounds + ";" +
 
-                "var timer = setInterval(function() {" +
+                "const stop=()=>{" +
+                "clearInterval(window.__mobileRecallTimer);" +
+                "clearTimeout(window.__mobileRecallAnswerTimer);" +
+                "clearTimeout(window.__mobileRecallNextTimer);" +
+                "window.__mobileRecallRunning=false;" +
+                "};" +
 
-                "if (!window.__mobileRecallRunning) {" +
-                "clearInterval(timer);" +
+                "const run=()=>{" +
+                "if(!window.__mobileRecallRunning){stop();return;}" +
+
+                "let end=document.querySelector('#study_end');" +
+                "if(end && getComputedStyle(end).display!=='none' && end.getClientRects().length>0){" +
+
+                "if(round>=rounds){stop();return;}" +
+
+                "let nextPercent=document.querySelector('#study_end > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > a');" +
+                "if(!nextPercent){stop();return;}" +
+
+                "round++;" +
+                "lastCard=null;" +
+                "nextPercent.click();" +
                 "return;" +
                 "}" +
 
-                "var end = document.querySelector('#study_end');" +
-                "if (end && getComputedStyle(end).display !== 'none' && end.getClientRects().length > 0) {" +
-                "clearInterval(timer);" +
-                "window.__mobileRecallRunning = false;" +
-                "return;" +
+                "let card=document.querySelector('.CardItem.current.showing');" +
+                "if(!card || card===lastCard)return;" +
+
+                "let choices=[...card.querySelectorAll('.cc-table.middle.fill-parent-w,.cc-table.middle.fill-parent')];" +
+                "let answer=choices.find(item=>item.classList.contains('answer'));" +
+                "if(!answer)return;" +
+
+                "let handler=window.jQuery?._data(answer,'events')?.click?.[0]?.handler;" +
+                "if(!handler)return;" +
+
+                "lastCard=card;" +
+
+                "window.__mobileRecallAnswerTimer=setTimeout(()=>{" +
+                "if(!window.__mobileRecallRunning)return;" +
+                "if(document.querySelector('.CardItem.current.showing')!==card)return;" +
+
+                "let event=window.jQuery.Event('click');" +
+                "event.target=answer;" +
+                "event.currentTarget=answer;" +
+                "event.which=1;" +
+
+                "Object.defineProperty(event,'originalEvent',{" +
+                "value:{type:'click',isTrusted:true,target:answer,currentTarget:answer,which:1}," +
+                "configurable:true" +
+                "});" +
+
+                "handler.call(answer,event);" +
+
+                "window.__mobileRecallNextTimer=setTimeout(()=>{" +
+                "if(!window.__mobileRecallRunning)return;" +
+                "let next=document.querySelector('.btn-short-change-next');" +
+                "if(next && window.jQuery)window.jQuery(next).trigger('click');" +
+                "},800);" +
+
+                "},1200);" +
+                "};" +
+
+                "run();" +
+                "window.__mobileRecallTimer=setInterval(run,200);" +
+                "})();";
+
+        webView.evaluateJavascript(script, null);
+    }
+
+    private void startSpell() {
+
+        statusText.setText("스펠 학습 자동 실행 중");
+
+        int rounds = repeatPercent / 100;
+
+        String script =
+                "(async()=>{" +
+
+                "if(window.__mobileSpellRunning)return;" +
+                "window.__mobileSpellRunning=true;" +
+
+                "const sleep=ms=>new Promise(r=>setTimeout(r,ms));" +
+                "const rounds=" + rounds + ";" +
+
+                "const norm=s=>(s||'').replace(/\\s+/g,' ').trim().toLocaleLowerCase();" +
+
+                "const stop=()=>{" +
+                "window.__mobileSpellRunning=false;" +
+                "clearTimeout(window.__mobileSpellTimer);" +
+                "};" +
+
+                "try{" +
+
+                "for(let round=1;round<=rounds;round++){" +
+
+                "while(window.__mobileSpellRunning){" +
+
+                "let end=document.querySelector('#study_end');" +
+                "if(end && getComputedStyle(end).display!=='none' && end.getClientRects().length>0)break;" +
+
+                "let card=document.querySelector('.CardItem.current.showing');" +
+                "if(!card){await sleep(300);continue;}" +
+
+                "let promptEl=card.querySelector('.spell-content.font-32,.spell-content,.card-quest-front');" +
+                "let input=card.querySelector('.spell-input:not(.hidden) input[name=\"input_answer\"],input[name=\"input_answer\"],input.input-answer');" +
+
+                "if(!promptEl || !input){await sleep(300);continue;}" +
+
+                "let prompt=norm(promptEl.innerText);" +
+                "let words=window.__classcardWords||[];" +
+                "let found=words.find(w=>norm(w.ko)===prompt || norm(w.en)===prompt);" +
+
+                "if(!found){" +
+                "console.log('스펠 정답을 찾지 못했습니다:',prompt);" +
+                "await sleep(1000);" +
+                "continue;" +
                 "}" +
 
-                "var card = document.querySelector('.CardItem.current.showing');" +
-                "if (!card || card === lastCard) return;" +
+                "let answer=norm(found.ko)===prompt?found.en:found.ko;" +
 
-                "var choices = Array.from(card.querySelectorAll('.cc-table.middle.fill-parent-w, .cc-table.middle.fill-parent'));" +
-                "var answer = choices.find(x => x.classList.contains('answer'));" +
+                "await sleep(1200);" +
+                "if(!window.__mobileSpellRunning)break;" +
 
-                "if (!answer) return;" +
+                "input.focus();" +
+                "input.value=answer;" +
+                "input.dispatchEvent(new Event('input',{bubbles:true}));" +
+                "input.dispatchEvent(new Event('change',{bubbles:true}));" +
 
-                "lastCard = card;" +
+                "await sleep(300);" +
 
-                "setTimeout(function() {" +
+                "let submit=card.querySelector('.btn-confirm') || document.querySelector('#wrapper-learn .btn-confirm') || document.querySelector('#wrapper-learn button[type=\"submit\"]');" +
 
-                "if (!window.__mobileRecallRunning) return;" +
-                "if (document.querySelector('.CardItem.current.showing') !== card) return;" +
-
-                "var handler = window.jQuery?._data(answer, 'events')?.click?.[0]?.handler;" +
-
-                "if (handler) {" +
-                "var event = window.jQuery.Event('click');" +
-                "event.target = answer;" +
-                "event.currentTarget = answer;" +
-                "event.which = 1;" +
-                "handler.call(answer, event);" +
-                "} else {" +
-                "answer.click();" +
+                "if(submit){" +
+                "submit.click();" +
+                "}else{" +
+                "input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));" +
+                "input.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));" +
                 "}" +
 
-                "setTimeout(function() {" +
-                "var next = document.querySelector('.btn-short-change-next');" +
-                "if (next && window.__mobileRecallRunning) next.click();" +
-                "}, 700);" +
+                "await sleep(700);" +
 
-                "}, 1200);" +
+                "let feedback=document.querySelector('.modal-content .btn-ok');" +
+                "if(feedback)feedback.click();" +
 
-                "}, 250);" +
+                "await sleep(300);" +
 
+                "let next=document.querySelector('.btn-short-change-next') || document.querySelector('#wrapper-learn .btn-next');" +
+                "if(next)next.click();" +
+
+                "await sleep(700);" +
+                "}" +
+
+                "if(!window.__mobileSpellRunning)break;" +
+
+                "if(round<rounds){" +
+                "let nextPercent=document.querySelector('#study_end > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > a');" +
+                "if(!nextPercent)break;" +
+                "nextPercent.click();" +
+                "await sleep(1500);" +
+                "}" +
+                "}" +
+
+                "}finally{" +
+                "stop();" +
+                "}" +
                 "})();";
 
         webView.evaluateJavascript(script, null);
@@ -409,7 +592,6 @@ public class MainActivity extends Activity {
         if (webView != null) {
             webView.saveState(outState);
         }
-
         super.onSaveInstanceState(outState);
     }
 
@@ -430,3 +612,4 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 }
+
