@@ -135,29 +135,6 @@ public class MainActivity extends Activity {
         repeat200.setOnClickListener(v -> setRepeat(200));
         repeat300.setOnClickListener(v -> setRepeat(300));
 
-        Button keyboardSettingsButton = new Button(this);
-        keyboardSettingsButton.setText("클카 입력 키보드 설정");
-        keyboardSettingsButton.setOnClickListener(v -> {
-            try {
-                startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS));
-            } catch (Exception e) {
-                setStatus("키보드 설정을 열 수 없습니다.");
-            }
-        });
-        panel.addView(keyboardSettingsButton);
-
-        Button keyboardPickerButton = new Button(this);
-        keyboardPickerButton.setText("입력 키보드 선택");
-        keyboardPickerButton.setOnClickListener(v -> {
-            InputMethodManager imm =
-                    (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-
-            if (imm != null) {
-                imm.showInputMethodPicker();
-            }
-        });
-        panel.addView(keyboardPickerButton);
-
         statusText = new TextView(this);
         statusText.setText("학습 화면을 기다리는 중...");
         statusText.setTextColor(Color.DKGRAY);
@@ -203,11 +180,32 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void sendSpellAnswer(String answer) {
             runOnUiThread(() -> {
-                boolean sent = ClasscardImeService.typeAnswer(answer);
+                if (webView == null || answer == null) return;
 
-                if (!sent) {
-                    setStatus("클카 입력 키보드를 활성화하고 선택해 주세요.");
-                }
+                String script =
+                        "(()=>{" +
+                        "const answer=" + JSONObject.quote(answer) + ";" +
+                        "const card=document.querySelector('.CardItem.current.showing');" +
+                        "if(!card)return false;" +
+                        "const input=[...card.querySelectorAll('input[name=\"input_answer\"]')]" +
+                        ".find(el=>el.getClientRects().length>0);" +
+                        "if(!input)return false;" +
+                        "const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;" +
+                        "input.focus();" +
+                        "input.click();" +
+                        "setter.call(input,'');" +
+                        "input.dispatchEvent(new Event('input',{bubbles:true}));" +
+                        "setter.call(input,answer);" +
+                        "input.dispatchEvent(new Event('input',{bubbles:true}));" +
+                        "input.dispatchEvent(new Event('change',{bubbles:true}));" +
+                        "return input.value===answer;" +
+                        "})()";
+
+                webView.evaluateJavascript(script, result -> {
+                    if ("false".equals(result)) {
+                        setStatus("입력창을 찾지 못했습니다.");
+                    }
+                });
             });
         }
     }
@@ -548,7 +546,7 @@ public class MainActivity extends Activity {
                 "if(!window.__mobileSpellRunning)break;" +
                 "if(i.value===answer)break;" +
                 "}" +
-                "if(i.value!==answer){window.__mobileSpellStatus='키보드 입력 확인 실패';await sleep(700);continue;}" +
+                "if(i.value!==answer){window.__mobileSpellStatus='입력 확인 실패';await sleep(700);continue;}" +
                 "window.__mobileSpellStatus='입력 확인 완료';" +
                 "await sleep(300);" +
                 "let b=submit();" +
