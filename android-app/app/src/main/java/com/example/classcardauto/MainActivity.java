@@ -1,4 +1,3 @@
-
 package com.example.classcardauto;
 
 import android.app.Activity;
@@ -6,8 +5,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.graphics.Color;
 import android.view.Gravity;
-import android.view.accessibility.AccessibilityManager;
-import android.content.Context;
+import android.view.inputmethod.InputMethodManager;
 import android.content.Intent;
 import android.provider.Settings;
 import android.webkit.CookieManager;
@@ -22,7 +20,6 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.content.SharedPreferences;
-import android.text.TextUtils;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -141,12 +138,28 @@ public class MainActivity extends Activity {
         repeat200.setOnClickListener(v -> setRepeat(200));
         repeat300.setOnClickListener(v -> setRepeat(300));
 
-        Button accessibilityButton = new Button(this);
-        accessibilityButton.setText("자동 입력 서비스 설정");
-        accessibilityButton.setOnClickListener(v ->
-                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        );
-        panel.addView(accessibilityButton);
+        Button keyboardSettingsButton = new Button(this);
+        keyboardSettingsButton.setText("클카 입력 키보드 설정");
+        keyboardSettingsButton.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS));
+            } catch (Exception e) {
+                setStatus("키보드 설정을 열 수 없습니다.");
+            }
+        });
+        panel.addView(keyboardSettingsButton);
+
+        Button keyboardPickerButton = new Button(this);
+        keyboardPickerButton.setText("입력 키보드 선택");
+        keyboardPickerButton.setOnClickListener(v -> {
+            InputMethodManager imm =
+                    (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+
+            if (imm != null) {
+                imm.showInputMethodPicker();
+            }
+        });
+        panel.addView(keyboardPickerButton);
 
         statusText = new TextView(this);
         statusText.setText("학습 화면을 기다리는 중...");
@@ -184,6 +197,7 @@ public class MainActivity extends Activity {
     }
 
     private class WordBridge {
+
         @JavascriptInterface
         public void saveWords(String json) {
             runOnUiThread(() -> storeWords(json));
@@ -192,12 +206,11 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void sendSpellAnswer(String answer) {
             runOnUiThread(() -> {
-                if (!SpellAccessibilityService.isEnabled(MainActivity.this)) {
-                    setStatus("접근성 자동 입력 서비스를 먼저 켜 주세요.");
-                    return;
-                }
+                boolean sent = ClasscardImeService.typeAnswer(answer);
 
-                SpellAccessibilityService.typeText(answer);
+                if (!sent) {
+                    setStatus("클카 입력 키보드를 활성화하고 선택해 주세요.");
+                }
             });
         }
     }
@@ -229,6 +242,7 @@ public class MainActivity extends Activity {
 
             savedWordsJson = valid.toString();
             savedWordCount = valid.length();
+
         } catch (Exception e) {
             savedWordsJson = "[]";
             savedWordCount = 0;
@@ -281,6 +295,7 @@ public class MainActivity extends Activity {
     private void setStatus(String message) {
         if (statusText == null || message == null) return;
         if (message.equals(lastDisplayedStatus)) return;
+
         lastDisplayedStatus = message;
         statusText.setText(message);
     }
@@ -292,9 +307,13 @@ public class MainActivity extends Activity {
                 "window.__mobileSpellStatus || ''",
                 result -> {
                     if (result == null || result.equals("null")) return;
+
                     try {
                         Object value = new JSONTokener(result).nextValue();
-                        if (value instanceof String) setStatus((String) value);
+
+                        if (value instanceof String) {
+                            setStatus((String) value);
+                        }
                     } catch (Exception ignored) {}
                 }
         );
@@ -302,13 +321,19 @@ public class MainActivity extends Activity {
 
     private void setRepeat(int percent) {
         repeatPercent = percent;
-        Toast.makeText(this, "반복 설정: " + percent + "%", Toast.LENGTH_SHORT).show();
+
+        Toast.makeText(
+                this,
+                "반복 설정: " + percent + "%",
+                Toast.LENGTH_SHORT
+        ).show();
     }
 
     private void restartDetection() {
         automationStarted = false;
         lastMode = "";
         lastDisplayedStatus = "";
+
         stopCurrentAutomation();
         setStatus("학습 화면을 다시 확인하는 중...");
     }
@@ -369,6 +394,7 @@ public class MainActivity extends Activity {
 
         webView.evaluateJavascript(script, result -> {
             String value = result == null ? "" : result.replace("\"", "");
+
             if (value.equals("missing") || value.equals("waiting")) {
                 captureInProgress = false;
             } else {
@@ -395,10 +421,12 @@ public class MainActivity extends Activity {
 
         webView.evaluateJavascript(script, result -> {
             if (result == null) return;
+
             String mode = result.replace("\"", "");
 
             if (mode.equals("none") || mode.equals("unknown")) {
                 if (automationStarted) stopCurrentAutomation();
+
                 automationStarted = false;
                 lastMode = "";
                 return;
@@ -407,6 +435,7 @@ public class MainActivity extends Activity {
             if (mode.equals("spell") && savedWordCount == 0) {
                 automationStarted = false;
                 lastMode = "";
+
                 setStatus("스펠 대기: 단어 목록을 먼저 수집해 주세요.");
                 return;
             }
@@ -425,6 +454,7 @@ public class MainActivity extends Activity {
 
     private void startMemorize() {
         setStatus("암기 자동 학습 중");
+
         int rounds = repeatPercent / 100;
 
         String script =
@@ -477,13 +507,6 @@ public class MainActivity extends Activity {
     }
 
     private void startSpell() {
-        if (!SpellAccessibilityService.isEnabled(this)) {
-            setStatus("먼저 '자동 입력 서비스 설정'에서 서비스를 켜 주세요.");
-            automationStarted = false;
-            lastMode = "";
-            return;
-        }
-
         setStatus("저장된 단어 " + savedWordCount + "개 복구 중...");
 
         String restore =
@@ -553,8 +576,11 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) webView.goBack();
-        else super.onBackPressed();
+        if (webView != null && webView.canGoBack()) {
+            webView.goBack();
+        } else {
+            super.onBackPressed();
+        }
     }
 
     @Override
