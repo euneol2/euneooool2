@@ -67,6 +67,10 @@ public class MainActivity extends Activity {
     private String lastCaptureLog = "";
     private String lastLoggedWordsJson = "";
 
+    private AlertDialog logDialog;
+    private TextView logContent;
+    private ScrollView logScrollView;
+
     private final Runnable detector = new Runnable() {
         @Override
         public void run() {
@@ -164,7 +168,6 @@ public class MainActivity extends Activity {
         nowLabel.setTypeface(null, android.graphics.Typeface.BOLD);
 
         statusHeader.addView(nowLabel);
-
         statusCard.addView(statusHeader);
 
         statusText = new TextView(this);
@@ -182,11 +185,11 @@ public class MainActivity extends Activity {
         statusLabel.setTextColor(Color.rgb(125, 133, 153));
 
         statusCard.addView(statusLabel);
-
         topArea.addView(statusCard);
 
         logButton = new TextView(this);
-        logButton.setText("☷  로그 보기 (" + logEntries.length() + ")");
+        updateLogButton();
+
         logButton.setTextSize(13);
         logButton.setTextColor(Color.rgb(65, 76, 105));
         logButton.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -252,34 +255,47 @@ public class MainActivity extends Activity {
         handler.postDelayed(detector, 1500);
     }
 
+    private void updateLogButton() {
+        if (logButton != null) {
+            logButton.setText("☷  로그 보기 (" + logEntries.length() + ")");
+        }
+    }
+
     private void addLog(String category, String message) {
-        try {
-            JSONObject entry = new JSONObject();
+        Runnable action = () -> {
+            try {
+                JSONObject entry = new JSONObject();
 
-            String time = new SimpleDateFormat(
-                    "yyyy-MM-dd HH:mm:ss",
-                    Locale.KOREA
-            ).format(new Date());
+                String time = new SimpleDateFormat(
+                        "yyyy-MM-dd HH:mm:ss",
+                        Locale.KOREA
+                ).format(new Date());
 
-            entry.put("time", time);
-            entry.put("category", category == null ? "일반" : category);
-            entry.put("message", message == null ? "" : message);
+                entry.put("time", time);
+                entry.put("category", category == null ? "일반" : category);
+                entry.put("message", message == null ? "" : message);
 
-            logEntries.put(entry);
+                logEntries.put(entry);
 
-            while (logEntries.length() > MAX_LOG_ENTRIES) {
-                logEntries.remove(0);
+                while (logEntries.length() > MAX_LOG_ENTRIES) {
+                    logEntries.remove(0);
+                }
+
+                preferences.edit()
+                        .putString("app_logs", logEntries.toString())
+                        .apply();
+
+                updateLogButton();
+                refreshLogDialog();
+
+            } catch (Exception ignored) {
             }
+        };
 
-            preferences.edit()
-                    .putString("app_logs", logEntries.toString())
-                    .apply();
-
-            if (logButton != null) {
-                logButton.setText("☷  로그 보기 (" + logEntries.length() + ")");
-            }
-
-        } catch (Exception ignored) {
+        if (Thread.currentThread() == getMainLooper().getThread()) {
+            action.run();
+        } else {
+            runOnUiThread(action);
         }
     }
 
@@ -301,25 +317,50 @@ public class MainActivity extends Activity {
         StringBuilder builder = new StringBuilder();
 
         if (logEntries.length() == 0) {
-            return "기록이 없습니다.";
+            builder.append("기록이 없습니다.\n");
+        } else {
+            for (int i = 0; i < logEntries.length(); i++) {
+                JSONObject entry = logEntries.optJSONObject(i);
+
+                if (entry == null) continue;
+
+                builder.append(entry.optString("time", ""))
+                        .append("\n")
+                        .append("[")
+                        .append(entry.optString("category", "일반"))
+                        .append("] ")
+                        .append(entry.optString("message", ""))
+                        .append("\n\n");
+            }
         }
 
-        for (int i = 0; i < logEntries.length(); i++) {
-            JSONObject entry = logEntries.optJSONObject(i);
+        builder.append("\n")
+                .append("========== 저장된 단어 목록 ==========\n")
+                .append("총 ")
+                .append(savedWordCount)
+                .append("개\n\n");
 
-            if (entry == null) continue;
+        try {
+            JSONArray words = new JSONArray(savedWordsJson);
 
-            String time = entry.optString("time", "");
-            String category = entry.optString("category", "일반");
-            String message = entry.optString("message", "");
+            if (words.length() == 0) {
+                builder.append("저장된 단어가 없습니다.\n");
+            } else {
+                for (int i = 0; i < words.length(); i++) {
+                    JSONObject word = words.optJSONObject(i);
+                    if (word == null) continue;
 
-            builder.append(time)
-                    .append("\n")
-                    .append("[")
-                    .append(category)
-                    .append("] ")
-                    .append(message)
-                    .append("\n\n");
+                    builder.append(i + 1)
+                            .append(". ")
+                            .append(word.optString("ko", ""))
+                            .append(" → ")
+                            .append(word.optString("en", ""))
+                            .append("\n");
+                }
+            }
+        } catch (Exception e) {
+            builder.append("단어 목록을 읽지 못했습니다: ")
+                    .append(e.getMessage());
         }
 
         return builder.toString();
@@ -330,22 +371,27 @@ public class MainActivity extends Activity {
         scrollView.setFillViewport(true);
         scrollView.setPadding(dp(16), dp(10), dp(16), dp(10));
 
-        TextView logContent = new TextView(this);
-        logContent.setText(getLogsText());
-        logContent.setTextSize(12);
-        logContent.setTextColor(Color.rgb(40, 47, 65));
-        logContent.setTextIsSelectable(true);
-        logContent.setLineSpacing(dp(3), 1f);
+        TextView content = new TextView(this);
+        content.setText(getLogsText());
+        content.setTextSize(12);
+        content.setTextColor(Color.rgb(40, 47, 65));
+        content.setTextIsSelectable(true);
+        content.setLineSpacing(dp(3), 1f);
 
-        scrollView.addView(logContent);
+        scrollView.addView(content);
+
+        logScrollView = scrollView;
+        logContent = content;
 
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("앱 로그")
+                .setTitle("앱 로그 및 저장 단어")
                 .setView(scrollView)
                 .setPositiveButton("닫기", null)
                 .setNeutralButton("복사", null)
                 .setNegativeButton("기록 삭제", null)
                 .create();
+
+        logDialog = dialog;
 
         dialog.setOnShowListener(d -> {
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> copyLogs());
@@ -353,17 +399,36 @@ public class MainActivity extends Activity {
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
                 new AlertDialog.Builder(this)
                         .setTitle("로그 삭제")
-                        .setMessage("저장된 로그를 모두 삭제할까요?")
+                        .setMessage("저장된 로그를 모두 삭제할까요? 단어 데이터는 삭제되지 않습니다.")
                         .setNegativeButton("취소", null)
                         .setPositiveButton("삭제", (dialogInterface, which) -> {
                             clearLogs();
-                            dialog.dismiss();
                         })
                         .show();
             });
         });
 
+        dialog.setOnDismissListener(d -> {
+            logDialog = null;
+            logContent = null;
+            logScrollView = null;
+        });
+
         dialog.show();
+    }
+
+    private void refreshLogDialog() {
+        if (logDialog == null || !logDialog.isShowing() || logContent == null) {
+            return;
+        }
+
+        int oldScrollY = logScrollView == null ? 0 : logScrollView.getScrollY();
+
+        logContent.setText(getLogsText());
+
+        if (logScrollView != null) {
+            logScrollView.post(() -> logScrollView.scrollTo(0, oldScrollY));
+        }
     }
 
     private void copyLogs() {
@@ -373,10 +438,14 @@ public class MainActivity extends Activity {
 
             if (clipboard == null) return;
 
-            ClipData clip = ClipData.newPlainText("Classcard Logs", getLogsText());
+            ClipData clip = ClipData.newPlainText(
+                    "Classcard Logs",
+                    getLogsText()
+            );
+
             clipboard.setPrimaryClip(clip);
 
-            Toast.makeText(this, "로그를 복사했습니다.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "로그와 저장 단어 목록을 복사했습니다.", Toast.LENGTH_SHORT).show();
 
         } catch (Exception e) {
             Toast.makeText(this, "로그 복사에 실패했습니다.", Toast.LENGTH_SHORT).show();
@@ -390,11 +459,10 @@ public class MainActivity extends Activity {
                 .putString("app_logs", "[]")
                 .apply();
 
-        if (logButton != null) {
-            logButton.setText("☷  로그 보기 (0)");
-        }
+        updateLogButton();
+        refreshLogDialog();
 
-        Toast.makeText(this, "로그를 삭제했습니다.", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "로그를 삭제했습니다. 저장된 단어는 유지됩니다.", Toast.LENGTH_SHORT).show();
     }
 
     private class WordBridge {
@@ -544,29 +612,15 @@ public class MainActivity extends Activity {
             setStatus("단어 저장 완료: " + savedWordCount + "개");
 
             if (!savedWordsJson.equals(lastLoggedWordsJson)) {
-                StringBuilder samples = new StringBuilder();
-
-                for (int i = 0; i < Math.min(5, valid.length()); i++) {
-                    JSONObject word = valid.optJSONObject(i);
-                    if (word == null) continue;
-
-                    if (samples.length() > 0) {
-                        samples.append(" | ");
-                    }
-
-                    samples.append(word.optString("ko"))
-                            .append(" → ")
-                            .append(word.optString("en"));
-                }
-
                 addLog(
                         "단어 저장 완료",
-                        "저장된 단어: " + savedWordCount +
-                        "개 / 예시: " + samples
+                        "저장된 단어: " + savedWordCount + "개"
                 );
 
                 lastLoggedWordsJson = savedWordsJson;
             }
+
+            refreshLogDialog();
 
         } catch (Exception e) {
             captureInProgress = false;
@@ -1005,7 +1059,9 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
+        if (logDialog != null && logDialog.isShowing()) {
+            logDialog.dismiss();
+        } else if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {
             super.onBackPressed();
