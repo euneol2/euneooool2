@@ -1,6 +1,7 @@
 package com.example.classcardauto;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.os.Bundle;
 import android.os.Handler;
 import android.graphics.Color;
@@ -16,15 +17,21 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.ScrollView;
+import android.widget.Toast;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.SharedPreferences;
 import android.animation.ObjectAnimator;
-import android.animation.Animator;
-import android.animation.AnimatorListenerAdapter;
 import android.view.animation.DecelerateInterpolator;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
 
@@ -43,6 +50,7 @@ public class MainActivity extends Activity {
 
     private TextView statusText;
     private TextView statusLabel;
+    private TextView logButton;
     private String lastDisplayedStatus = "";
 
     private LinearLayout statusCard;
@@ -51,6 +59,13 @@ public class MainActivity extends Activity {
     private SharedPreferences preferences;
     private String savedWordsJson = "[]";
     private int savedWordCount = 0;
+
+    private JSONArray logEntries = new JSONArray();
+
+    private static final int MAX_LOG_ENTRIES = 300;
+
+    private String lastCaptureLog = "";
+    private String lastLoggedWordsJson = "";
 
     private final Runnable detector = new Runnable() {
         @Override
@@ -88,12 +103,24 @@ public class MainActivity extends Activity {
         return drawable;
     }
 
+    private GradientDrawable logButtonBackground() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(Color.argb(170, 255, 255, 255));
+        drawable.setCornerRadius(dp(16));
+        drawable.setStroke(dp(1), Color.argb(170, 255, 255, 255));
+        return drawable;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         preferences = getSharedPreferences("classcard_word_memory", MODE_PRIVATE);
+
         loadSavedWords();
+        loadLogs();
+
+        addLog("앱 시작", "앱 실행 / 저장된 단어: " + savedWordCount + "개");
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -158,6 +185,26 @@ public class MainActivity extends Activity {
 
         topArea.addView(statusCard);
 
+        logButton = new TextView(this);
+        logButton.setText("☷  로그 보기 (" + logEntries.length() + ")");
+        logButton.setTextSize(13);
+        logButton.setTextColor(Color.rgb(65, 76, 105));
+        logButton.setTypeface(null, android.graphics.Typeface.BOLD);
+        logButton.setGravity(Gravity.CENTER);
+        logButton.setPadding(dp(14), dp(11), dp(14), dp(11));
+        logButton.setBackground(logButtonBackground());
+        logButton.setElevation(dp(3));
+
+        LinearLayout.LayoutParams logButtonParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+
+        logButtonParams.topMargin = dp(10);
+        topArea.addView(logButton, logButtonParams);
+
+        logButton.setOnClickListener(v -> showLogs());
+
         root.addView(topArea);
 
         webView = new WebView(this);
@@ -205,6 +252,151 @@ public class MainActivity extends Activity {
         handler.postDelayed(detector, 1500);
     }
 
+    private void addLog(String category, String message) {
+        try {
+            JSONObject entry = new JSONObject();
+
+            String time = new SimpleDateFormat(
+                    "yyyy-MM-dd HH:mm:ss",
+                    Locale.KOREA
+            ).format(new Date());
+
+            entry.put("time", time);
+            entry.put("category", category == null ? "일반" : category);
+            entry.put("message", message == null ? "" : message);
+
+            logEntries.put(entry);
+
+            while (logEntries.length() > MAX_LOG_ENTRIES) {
+                logEntries.remove(0);
+            }
+
+            preferences.edit()
+                    .putString("app_logs", logEntries.toString())
+                    .apply();
+
+            if (logButton != null) {
+                logButton.setText("☷  로그 보기 (" + logEntries.length() + ")");
+            }
+
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void loadLogs() {
+        try {
+            String saved = preferences.getString("app_logs", "[]");
+            logEntries = new JSONArray(saved);
+
+            while (logEntries.length() > MAX_LOG_ENTRIES) {
+                logEntries.remove(0);
+            }
+
+        } catch (Exception e) {
+            logEntries = new JSONArray();
+        }
+    }
+
+    private String getLogsText() {
+        StringBuilder builder = new StringBuilder();
+
+        if (logEntries.length() == 0) {
+            return "기록이 없습니다.";
+        }
+
+        for (int i = 0; i < logEntries.length(); i++) {
+            JSONObject entry = logEntries.optJSONObject(i);
+
+            if (entry == null) continue;
+
+            String time = entry.optString("time", "");
+            String category = entry.optString("category", "일반");
+            String message = entry.optString("message", "");
+
+            builder.append(time)
+                    .append("\n")
+                    .append("[")
+                    .append(category)
+                    .append("] ")
+                    .append(message)
+                    .append("\n\n");
+        }
+
+        return builder.toString();
+    }
+
+    private void showLogs() {
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.setFillViewport(true);
+        scrollView.setPadding(dp(16), dp(10), dp(16), dp(10));
+
+        TextView logContent = new TextView(this);
+        logContent.setText(getLogsText());
+        logContent.setTextSize(12);
+        logContent.setTextColor(Color.rgb(40, 47, 65));
+        logContent.setTextIsSelectable(true);
+        logContent.setLineSpacing(dp(3), 1f);
+
+        scrollView.addView(logContent);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("앱 로그")
+                .setView(scrollView)
+                .setPositiveButton("닫기", null)
+                .setNeutralButton("복사", null)
+                .setNegativeButton("기록 삭제", null)
+                .create();
+
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> copyLogs());
+
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
+                new AlertDialog.Builder(this)
+                        .setTitle("로그 삭제")
+                        .setMessage("저장된 로그를 모두 삭제할까요?")
+                        .setNegativeButton("취소", null)
+                        .setPositiveButton("삭제", (dialogInterface, which) -> {
+                            clearLogs();
+                            dialog.dismiss();
+                        })
+                        .show();
+            });
+        });
+
+        dialog.show();
+    }
+
+    private void copyLogs() {
+        try {
+            ClipboardManager clipboard = (ClipboardManager)
+                    getSystemService(CLIPBOARD_SERVICE);
+
+            if (clipboard == null) return;
+
+            ClipData clip = ClipData.newPlainText("Classcard Logs", getLogsText());
+            clipboard.setPrimaryClip(clip);
+
+            Toast.makeText(this, "로그를 복사했습니다.", Toast.LENGTH_SHORT).show();
+
+        } catch (Exception e) {
+            Toast.makeText(this, "로그 복사에 실패했습니다.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void clearLogs() {
+        logEntries = new JSONArray();
+
+        preferences.edit()
+                .putString("app_logs", "[]")
+                .apply();
+
+        if (logButton != null) {
+            logButton.setText("☷  로그 보기 (0)");
+        }
+
+        Toast.makeText(this, "로그를 삭제했습니다.", Toast.LENGTH_SHORT).show();
+    }
+
     private class WordBridge {
 
         @JavascriptInterface
@@ -213,9 +405,16 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void spellLog(String category, String message) {
+            runOnUiThread(() -> addLog(category, message));
+        }
+
+        @JavascriptInterface
         public void sendSpellAnswer(String answer) {
             runOnUiThread(() -> {
                 if (webView == null || answer == null) return;
+
+                addLog("스펠 입력 요청", "입력할 정답: " + answer);
 
                 String prepareScript =
                         "(()=>{" +
@@ -235,6 +434,7 @@ public class MainActivity extends Activity {
 
                     if (!"true".equals(result)) {
                         setStatus("스펠 입력창을 찾지 못했습니다.");
+                        addLog("스펠 입력 오류", "입력창을 찾지 못했습니다. 반환값: " + result);
                         return;
                     }
 
@@ -244,6 +444,7 @@ public class MainActivity extends Activity {
 
                         if (connection == null) {
                             setStatus("키보드 입력 연결을 가져오지 못했습니다.");
+                            addLog("스펠 입력 오류", "InputConnection이 null입니다.");
                             return;
                         }
 
@@ -251,10 +452,14 @@ public class MainActivity extends Activity {
 
                         if (!committed) {
                             setStatus("Android 키보드 입력에 실패했습니다.");
+                            addLog("스펠 입력 오류", "commitText 결과가 false입니다.");
+                        } else {
+                            addLog("스펠 입력", "Android 입력 성공: " + answer);
                         }
 
                     } catch (Exception e) {
                         setStatus("스펠 입력 오류: " + e.getMessage());
+                        addLog("스펠 입력 예외", e.toString());
                     }
                 });
             });
@@ -318,6 +523,12 @@ public class MainActivity extends Activity {
             if (valid.length() == 0) {
                 captureInProgress = false;
                 setStatus("단어 수집 실패");
+
+                addLog(
+                        "단어 수집 실패",
+                        "수집된 단어가 없습니다. 전달받은 데이터: " + json
+                );
+
                 return;
             }
 
@@ -332,9 +543,35 @@ public class MainActivity extends Activity {
             captureInProgress = false;
             setStatus("단어 저장 완료: " + savedWordCount + "개");
 
+            if (!savedWordsJson.equals(lastLoggedWordsJson)) {
+                StringBuilder samples = new StringBuilder();
+
+                for (int i = 0; i < Math.min(5, valid.length()); i++) {
+                    JSONObject word = valid.optJSONObject(i);
+                    if (word == null) continue;
+
+                    if (samples.length() > 0) {
+                        samples.append(" | ");
+                    }
+
+                    samples.append(word.optString("ko"))
+                            .append(" → ")
+                            .append(word.optString("en"));
+                }
+
+                addLog(
+                        "단어 저장 완료",
+                        "저장된 단어: " + savedWordCount +
+                        "개 / 예시: " + samples
+                );
+
+                lastLoggedWordsJson = savedWordsJson;
+            }
+
         } catch (Exception e) {
             captureInProgress = false;
             setStatus("단어 저장 오류: " + e.getMessage());
+            addLog("단어 저장 예외", e.toString());
         }
     }
 
@@ -436,13 +673,19 @@ public class MainActivity extends Activity {
                 "let current=document.querySelectorAll('#tab_set_all > div:nth-child(2) > div');" +
                 "for(let i=0;i<current.length&&i<words.length;i++){" +
                 "let ko=current[i].querySelector('div:nth-child(4) > div:nth-child(2) > div:nth-child(1) > div > div');" +
-                "if(ko)words[i].ko=ko.innerText.split('\\n')[0].trim();" +
+                "if(ko)words[i].ko=ko.innerText.trim();" +
                 "}" +
                 "let valid=words.filter(w=>w.en&&w.ko);" +
                 "window.__classcardWords=valid;" +
                 "window.__classcardWordsReady=valid.length>0;" +
-                "if(valid.length)ClasscardBridge.saveWords(JSON.stringify(valid));" +
-                "}catch(e){}finally{" +
+                "if(valid.length){" +
+                "ClasscardBridge.saveWords(JSON.stringify(valid));" +
+                "}else{" +
+                "ClasscardBridge.spellLog('단어 수집 실패','영어 단어는 찾았지만 한국어 뜻을 수집하지 못했습니다.');" +
+                "}" +
+                "}catch(e){" +
+                "try{ClasscardBridge.spellLog('단어 수집 예외',String(e));}catch(ignore){}" +
+                "}finally{" +
                 "let t=document.querySelector('#tab_set_all .card-list-title > div > div:nth-child(1) > a');" +
                 "if(t)t.click();" +
                 "window.__classcardCaptureRunning=false;" +
@@ -456,7 +699,18 @@ public class MainActivity extends Activity {
 
             if (value.equals("missing") || value.equals("waiting")) {
                 captureInProgress = false;
+
+                if (!value.equals(lastCaptureLog)) {
+                    addLog("단어 수집", "수집 영역 상태: " + value);
+                    lastCaptureLog = value;
+                }
+
             } else {
+                if (!value.equals(lastCaptureLog)) {
+                    addLog("단어 수집", "단어 목록 수집 작업 시작");
+                    lastCaptureLog = value;
+                }
+
                 handler.postDelayed(() -> captureInProgress = false, 5000);
             }
         });
@@ -504,6 +758,8 @@ public class MainActivity extends Activity {
 
             automationStarted = true;
             lastMode = mode;
+
+            addLog("화면 감지", "학습 모드 감지: " + mode);
 
             if (mode.equals("memorize") && memorizeEnabled) startMemorize();
             if (mode.equals("recall") && recallEnabled) startRecall();
@@ -604,6 +860,8 @@ public class MainActivity extends Activity {
     private void startSpell() {
         setStatus("저장된 단어 " + savedWordCount + "개 복구 중...");
 
+        addLog("스펠 시작", "저장된 단어 " + savedWordCount + "개를 복구합니다.");
+
         String restore =
                 "window.__classcardWords=JSON.parse(" +
                 JSONObject.quote(savedWordsJson) +
@@ -620,6 +878,7 @@ public class MainActivity extends Activity {
                 "window.__mobileSpellStatus='스펠 자동화 시작';" +
                 "const sleep=ms=>new Promise(r=>setTimeout(r,ms));" +
                 "const norm=s=>(s||'').replace(/\\s+/g,' ').trim().toLowerCase();" +
+                "const log=(category,message)=>{try{ClasscardBridge.spellLog(category,String(message));}catch(e){}};" +
                 "const visible=el=>{if(!el)return false;let r=el.getBoundingClientRect();let s=getComputedStyle(el);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0';};" +
                 "const card=()=>document.querySelector('.CardItem.current.showing');" +
                 "const input=c=>c?[...c.querySelectorAll('.spell-input:not(.hidden) input[name=\"input_answer\"],input[name=\"input_answer\"]')].find(visible):null;" +
@@ -643,6 +902,8 @@ public class MainActivity extends Activity {
                 "return true;" +
                 "};" +
                 "let rounds=" + (repeatPercent / 100) + ";" +
+                "let lastMissingKey='';" +
+                "log('스펠 자동화','시작 / 저장 단어 수: '+words.length);" +
                 "for(let round=1;round<=rounds&&window.__mobileSpellRunning;round++){" +
                 "let lastKey='';" +
                 "while(window.__mobileSpellRunning){" +
@@ -662,15 +923,23 @@ public class MainActivity extends Activity {
                 "let w=words.find(x=>norm(x.ko)===norm(p)||norm(x.en)===norm(p));" +
                 "if(!w){" +
                 "window.__mobileSpellStatus='정답 데이터 없음: '+p;" +
+                "let missingKey=norm(p);" +
+                "if(lastMissingKey!==missingKey){" +
+                "let examples=words.slice(0,5).map(x=>(x.ko||'')+' → '+(x.en||'')).join(' | ');" +
+                "log('정답 데이터 없음','표시된 뜻: '+p+' / 저장 단어 수: '+words.length+' / 저장 예시: '+examples);" +
+                "lastMissingKey=missingKey;" +
+                "}" +
                 "await sleep(700);" +
                 "continue;" +
                 "}" +
+                "lastMissingKey='';" +
                 "let answer=norm(w.ko)===norm(p)?w.en:w.ko;" +
                 "lastKey=currentKey;" +
+                "log('단어 매칭 성공','문제: '+p+' / 연결된 단어: '+w.ko+' → '+w.en+' / 입력할 답: '+answer);" +
                 "window.__mobileSpellStatus='입력 준비 중: '+p;" +
                 "i.focus();" +
                 "i.click();" +
-                "try{ClasscardBridge.sendSpellAnswer(answer);}catch(e){}" +
+                "try{ClasscardBridge.sendSpellAnswer(answer);}catch(e){log('스펠 입력 예외',String(e));}" +
                 "let filled=false;" +
                 "for(let t=0;t<30;t++){" +
                 "await sleep(200);" +
@@ -680,10 +949,12 @@ public class MainActivity extends Activity {
                 "if(!filled){" +
                 "lastKey='';" +
                 "window.__mobileSpellStatus='입력 확인 실패';" +
+                "log('스펠 입력 실패','문제: '+p+' / 예상 답: '+answer+' / 실제 입력값: '+i.value);" +
                 "await sleep(500);" +
                 "continue;" +
                 "}" +
                 "window.__mobileSpellStatus='입력 확인 완료';" +
+                "log('스펠 입력 확인','문제: '+p+' / 입력된 답: '+i.value);" +
                 "await sleep(300);" +
                 "submit(i);" +
                 "window.__mobileSpellStatus='정답 제출 중';" +
@@ -715,14 +986,17 @@ public class MainActivity extends Activity {
                 "if(!changed){" +
                 "lastKey='';" +
                 "window.__mobileSpellStatus='다음 문제 이동 실패';" +
+                "log('스펠 이동 실패','정답 제출 후 다음 문제로 이동하지 못했습니다. 문제: '+p);" +
                 "await sleep(1000);" +
                 "continue;" +
                 "}" +
                 "window.__mobileSpellStatus='문제 처리 완료';" +
+                "log('스펠 진행','문제 처리 완료: '+p);" +
                 "await sleep(250);" +
                 "}" +
                 "}" +
                 "window.__mobileSpellStatus='스펠 반복 완료';" +
+                "log('스펠 완료','스펠 자동화가 종료됐습니다.');" +
                 "window.__mobileSpellRunning=false;" +
                 "})();";
 
