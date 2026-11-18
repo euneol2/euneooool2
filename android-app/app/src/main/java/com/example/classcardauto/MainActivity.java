@@ -725,17 +725,28 @@ public class MainActivity extends Activity {
                 "setTimeout(()=>{" +
                 "try{" +
                 "let current=document.querySelectorAll('#tab_set_all > div:nth-child(2) > div');" +
+                "let missing=[];" +
                 "for(let i=0;i<current.length&&i<words.length;i++){" +
                 "let ko=current[i].querySelector('div:nth-child(4) > div:nth-child(2) > div:nth-child(1) > div > div');" +
-                "if(ko)words[i].ko=ko.innerText.trim();" +
+                "if(ko){" +
+                "words[i].ko=ko.innerText.trim();" +
+                "}else{" +
+                "missing.push('행 '+(i+1)+': '+(current[i].innerText||'').trim());" +
+                "}" +
                 "}" +
                 "let valid=words.filter(w=>w.en&&w.ko);" +
                 "window.__classcardWords=valid;" +
                 "window.__classcardWordsReady=valid.length>0;" +
                 "if(valid.length){" +
                 "ClasscardBridge.saveWords(JSON.stringify(valid));" +
-                "}else{" +
-                "ClasscardBridge.spellLog('단어 수집 실패','영어 단어는 찾았지만 한국어 뜻을 수집하지 못했습니다.');" +
+                "}" +
+                "if(missing.length){" +
+                "ClasscardBridge.spellLog('한국어 뜻 수집 진단'," +
+                "'전체 행: '+current.length+' / 영어 단어: '+words.length+' / 한국어 뜻 누락: '+missing.length+'\\n'+missing.slice(0,8).join('\\n'));" +
+                "}" +
+                "if(!valid.length){" +
+                "ClasscardBridge.spellLog('단어 수집 실패'," +
+                "'영어 단어는 찾았지만 한국어 뜻을 수집하지 못했습니다. 행 수: '+current.length+' / 영어 단어 수: '+words.length+'\\n'+missing.slice(0,8).join('\\n'));" +
                 "}" +
                 "}catch(e){" +
                 "try{ClasscardBridge.spellLog('단어 수집 예외',String(e));}catch(ignore){}" +
@@ -931,18 +942,62 @@ public class MainActivity extends Activity {
                 "window.__mobileSpellRunning=true;" +
                 "window.__mobileSpellStatus='스펠 자동화 시작';" +
                 "const sleep=ms=>new Promise(r=>setTimeout(r,ms));" +
-                "const norm=s=>(s||'').replace(/\\s+/g,' ').trim().toLowerCase();" +
-                "const log=(category,message)=>{try{ClasscardBridge.spellLog(category,String(message));}catch(e){}};" +
-                "const visible=el=>{if(!el)return false;let r=el.getBoundingClientRect();let s=getComputedStyle(el);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0';};" +
+
+                "const norm=s=>(s||'').normalize('NFKC').toLowerCase()" +
+                ".replace(/[.,，。:：;；!?！？]/g,' ')" +
+                ".replace(/\\s+/g,' ').trim();" +
+
+                "const meaningParts=s=>(s||'').split(/[\\n\\r,，;；、/|]+/)" +
+                ".map(x=>norm(x)).filter(x=>x.length>0);" +
+
+                "const log=(category,message)=>{" +
+                "try{ClasscardBridge.spellLog(category,String(message));}catch(e){}" +
+                "};" +
+
+                "const visible=el=>{" +
+                "if(!el)return false;" +
+                "let r=el.getBoundingClientRect();" +
+                "let s=getComputedStyle(el);" +
+                "return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0';" +
+                "};" +
+
                 "const card=()=>document.querySelector('.CardItem.current.showing');" +
-                "const input=c=>c?[...c.querySelectorAll('.spell-input:not(.hidden) input[name=\"input_answer\"],input[name=\"input_answer\"]')].find(visible):null;" +
-                "const prompt=c=>{let e=c&&c.querySelector('.spell-content.font-32,.spell-content,.card-quest-front');return visible(e)?e.innerText.trim():'';};" +
+
+                "const input=c=>c?" +
+                "[...c.querySelectorAll('.spell-input:not(.hidden) input[name=\"input_answer\"],input[name=\"input_answer\"]')].find(visible):null;" +
+
+                "const prompt=c=>{" +
+                "if(!c)return '';" +
+                "let e=c.querySelector('.spell-content.font-32')||" +
+                "c.querySelector('.spell-content')||" +
+                "c.querySelector('.card-quest-front');" +
+                "return visible(e)?e.innerText.trim():'';" +
+                "};" +
+
                 "const words=window.__classcardWords||[];" +
+
+                "const findWord=p=>{" +
+                "let target=norm(p);" +
+                "if(!target)return null;" +
+
+                "let exact=words.find(w=>norm(w.ko)===target);" +
+                "if(exact)return exact;" +
+
+                "for(let w of words){" +
+                "if(meaningParts(w.ko).includes(target))return w;" +
+                "}" +
+
+                "return null;" +
+                "};" +
+
                 "const popup=()=>{" +
-                "let b=[...document.querySelectorAll('button,a,[role=\"button\"]')].find(e=>visible(e)&&e.textContent.trim()==='알겠습니다!');" +
+                "let b=[...document.querySelectorAll('button,a,[role=\"button\"]')]" +
+                ".find(e=>visible(e)&&e.textContent.trim()==='알겠습니다!');" +
                 "if(b)b.click();" +
                 "};" +
+
                 "const key=c=>((c&&c.dataset.idx)||'')+'|'+norm(prompt(c));" +
+
                 "const submit=i=>{" +
                 "let b=[...document.querySelectorAll('.btn-confirm,button[type=\"submit\"],#wrapper-learn .btn-primary')].find(visible);" +
                 "if(b){b.click();return true;}" +
@@ -955,73 +1010,105 @@ public class MainActivity extends Activity {
                 "i.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));" +
                 "return true;" +
                 "};" +
+
                 "let rounds=" + (repeatPercent / 100) + ";" +
                 "let lastMissingKey='';" +
+
                 "log('스펠 자동화','시작 / 저장 단어 수: '+words.length);" +
+
+                "if(!words.length){" +
+                "log('정답 데이터 오류','웹뷰에 복구된 단어가 없습니다.');" +
+                "window.__mobileSpellStatus='저장된 단어가 없습니다';" +
+                "window.__mobileSpellRunning=false;" +
+                "return;" +
+                "}" +
+
                 "for(let round=1;round<=rounds&&window.__mobileSpellRunning;round++){" +
                 "let lastKey='';" +
+
                 "while(window.__mobileSpellRunning){" +
                 "popup();" +
                 "let c=card();" +
+
                 "if(!c){" +
                 "let end=document.querySelector('#study_end');" +
                 "if(end&&visible(end))break;" +
                 "await sleep(300);" +
                 "continue;" +
                 "}" +
+
                 "let p=prompt(c);" +
                 "let i=input(c);" +
+
                 "if(!p||!i){await sleep(250);continue;}" +
+
                 "let currentKey=key(c);" +
                 "if(currentKey===lastKey){await sleep(200);continue;}" +
-                "let w=words.find(x=>norm(x.ko)===norm(p)||norm(x.en)===norm(p));" +
+
+                "let w=findWord(p);" +
+
                 "if(!w){" +
                 "window.__mobileSpellStatus='정답 데이터 없음: '+p;" +
                 "let missingKey=norm(p);" +
+
                 "if(lastMissingKey!==missingKey){" +
-                "let examples=words.slice(0,5).map(x=>(x.ko||'')+' → '+(x.en||'')).join(' | ');" +
-                "log('정답 데이터 없음','표시된 뜻: '+p+' / 저장 단어 수: '+words.length+' / 저장 예시: '+examples);" +
+                "let list=words.map((x,n)=>(n+1)+'. '+x.ko+' → '+x.en).join('\\n');" +
+                "log('정답 데이터 없음'," +
+                "'현재 문제: '+p+'\\n저장 단어 수: '+words.length+'\\n전체 저장 목록:\\n'+list);" +
                 "lastMissingKey=missingKey;" +
                 "}" +
+
                 "await sleep(700);" +
                 "continue;" +
                 "}" +
+
                 "lastMissingKey='';" +
-                "let answer=norm(w.ko)===norm(p)?w.en:w.ko;" +
+                "let answer=w.en;" +
                 "lastKey=currentKey;" +
-                "log('단어 매칭 성공','문제: '+p+' / 연결된 단어: '+w.ko+' → '+w.en+' / 입력할 답: '+answer);" +
+
+                "log('단어 매칭 성공'," +
+                "'문제: '+p+' / 저장된 뜻: '+w.ko+' / 영어 단어: '+w.en);" +
+
                 "window.__mobileSpellStatus='입력 준비 중: '+p;" +
                 "i.focus();" +
                 "i.click();" +
-                "try{ClasscardBridge.sendSpellAnswer(answer);}catch(e){log('스펠 입력 예외',String(e));}" +
+
+                "try{ClasscardBridge.sendSpellAnswer(answer);}" +
+                "catch(e){log('스펠 입력 예외',String(e));}" +
+
                 "let filled=false;" +
+
                 "for(let t=0;t<30;t++){" +
                 "await sleep(200);" +
                 "if(!window.__mobileSpellRunning)break;" +
                 "if(i.value===answer){filled=true;break;}" +
                 "}" +
+
                 "if(!filled){" +
                 "lastKey='';" +
                 "window.__mobileSpellStatus='입력 확인 실패';" +
-                "log('스펠 입력 실패','문제: '+p+' / 예상 답: '+answer+' / 실제 입력값: '+i.value);" +
+                "log('스펠 입력 실패'," +
+                "'문제: '+p+' / 예상 답: '+answer+' / 실제 입력값: '+i.value);" +
                 "await sleep(500);" +
                 "continue;" +
                 "}" +
+
                 "window.__mobileSpellStatus='입력 확인 완료';" +
                 "log('스펠 입력 확인','문제: '+p+' / 입력된 답: '+i.value);" +
+
                 "await sleep(300);" +
                 "submit(i);" +
                 "window.__mobileSpellStatus='정답 제출 중';" +
+
                 "let changed=false;" +
+
                 "for(let t=0;t<40;t++){" +
                 "await sleep(150);" +
                 "popup();" +
                 "let now=card();" +
-                "if(!now||key(now)!==currentKey){" +
-                "changed=true;" +
-                "break;" +
+                "if(!now||key(now)!==currentKey){changed=true;break;}" +
                 "}" +
-                "}" +
+
                 "if(!changed){" +
                 "let n=[...document.querySelectorAll('.btn-short-change-next')].find(visible);" +
                 "if(n){" +
@@ -1030,25 +1117,25 @@ public class MainActivity extends Activity {
                 "await sleep(150);" +
                 "popup();" +
                 "let now=card();" +
-                "if(!now||key(now)!==currentKey){" +
-                "changed=true;" +
-                "break;" +
+                "if(!now||key(now)!==currentKey){changed=true;break;}" +
                 "}" +
                 "}" +
                 "}" +
-                "}" +
+
                 "if(!changed){" +
                 "lastKey='';" +
                 "window.__mobileSpellStatus='다음 문제 이동 실패';" +
-                "log('스펠 이동 실패','정답 제출 후 다음 문제로 이동하지 못했습니다. 문제: '+p);" +
+                "log('스펠 이동 실패','문제: '+p);" +
                 "await sleep(1000);" +
                 "continue;" +
                 "}" +
+
                 "window.__mobileSpellStatus='문제 처리 완료';" +
                 "log('스펠 진행','문제 처리 완료: '+p);" +
                 "await sleep(250);" +
                 "}" +
                 "}" +
+
                 "window.__mobileSpellStatus='스펠 반복 완료';" +
                 "log('스펠 완료','스펠 자동화가 종료됐습니다.');" +
                 "window.__mobileSpellRunning=false;" +
