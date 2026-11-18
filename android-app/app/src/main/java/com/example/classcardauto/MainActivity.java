@@ -1,4 +1,3 @@
-Java
 package com.example.classcardauto;
 
 import android.app.Activity;
