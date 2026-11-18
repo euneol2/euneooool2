@@ -884,6 +884,9 @@ public class MainActivity extends Activity {
                 "const sleep=ms=>new Promise(r=>setTimeout(r,ms));" +
 
                 "const norm=s=>(s||'').normalize('NFKC').toLowerCase()" +
+                ".replace(/\\[(명|동|형|부|대명사|관형사|감탄사|조사|접속사|전치사)\\]/g,' ')" +
+                ".replace(/(^|\\s)\\d+\\s*[.)、．]\\s*/g,' ')" +
+                ".replace(/[.…⋯]/g,' ')" +
                 ".replace(/[.,，。:：;；!?！？]/g,' ')" +
                 ".replace(/\\s+/g,' ').trim();" +
 
@@ -922,7 +925,11 @@ public class MainActivity extends Activity {
                 "let exact=words.find(w=>norm(w.ko)===target);" +
                 "if(exact)return exact;" +
                 "for(let w of words){" +
-                "if(meaningParts(w.ko).includes(target))return w;" +
+                "let full=norm(w.ko);" +
+                "let parts=meaningParts(w.ko);" +
+                "if(parts.includes(target))return w;" +
+                "if(target.length>=3&&full.length>=3&&(full.includes(target)||target.includes(full)))return w;" +
+                "if(parts.some(part=>part.length>=3&&(part.includes(target)||target.includes(part))))return w;" +
                 "}" +
                 "return null;" +
                 "};" +
@@ -988,7 +995,8 @@ public class MainActivity extends Activity {
                 "window.__mobileSpellStatus='정답 없음: '+p;" +
                 "let missingKey=norm(p);" +
                 "if(lastMissingKey!==missingKey){" +
-                "log('정답 없음','문제: '+p+' / 단어 '+words.length+'개');" +
+                "let samples=words.slice(0,8).map(x=>x.ko+' => '+norm(x.ko)).join(' | ');" +
+                "log('정답 없음','문제: '+p+' / 정규화: '+missingKey+' / 저장 예시: '+samples+' / 단어 '+words.length+'개');" +
                 "lastMissingKey=missingKey;" +
                 "}" +
                 "await sleep(700);" +
